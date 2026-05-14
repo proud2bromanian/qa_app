@@ -7,6 +7,32 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      (() => {
+        const reloadKey = 'qa-app-reloaded-after-missing-asset';
+        const isAppAsset = (url) => typeof url === 'string' && url.includes('/_app/immutable/');
+        const reloadOnce = () => {
+          if (sessionStorage.getItem(reloadKey)) return;
+          sessionStorage.setItem(reloadKey, '1');
+          window.location.reload();
+        };
+
+        window.addEventListener('vite:preloadError', (event) => {
+          event.preventDefault();
+          reloadOnce();
+        });
+
+        window.addEventListener('error', (event) => {
+          const target = event.target;
+          const url = target && ('src' in target ? target.src : 'href' in target ? target.href : '');
+          if (isAppAsset(url)) reloadOnce();
+        }, true);
+
+        window.addEventListener('load', () => {
+          sessionStorage.removeItem(reloadKey);
+        });
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-prerender="false">
