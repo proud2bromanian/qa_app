@@ -293,6 +293,11 @@
     formData.append('file', input.files[0]);
     const r = await fetch(`/api/projects/${projectId}/import-csv`, { method: 'POST', body: formData });
     const data = await r.json();
+    if (!r.ok) {
+      toast.error(data.error || 'Importul CSV a eșuat');
+      input.value = '';
+      return;
+    }
     if (data.errors) {
       toast.success(`Import: ${data.imported} teste adăugate, ${data.errors.length} erori`);
     } else {

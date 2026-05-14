@@ -7,24 +7,25 @@ export async function POST({ locals, params, request }) {
   const { autorizat } = await verificaMembruProiect(locals.user.id, params.id);
   if (!autorizat) return json({ error: 'Nu aveți acces la acest proiect' }, { status: 403 });
 
-  const formData = await request.formData();
-  const file = formData.get('file') as File;
-  if (!file) return json({ error: 'Fișier lipsă' }, { status: 400 });
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    if (!file) return json({ error: 'Fișier lipsă' }, { status: 400 });
 
-  const text = await file.text();
-  const rows = parseCSV(text);
-  if (rows.length < 2) return json({ error: 'Fișierul nu conține date' }, { status: 400 });
+    const text = await file.text();
+    const rows = parseCSV(text);
+    if (rows.length < 2) return json({ error: 'Fișierul nu conține date' }, { status: 400 });
 
-  const imported: any[] = [];
-  const errors: string[] = [];
-
-  await prisma.$transaction(async (tx) => {
-    const result = await tx.$queryRaw<{ maxCod: number | null }[]>`
-      SELECT MAX(CAST(SUBSTR(cod, 4) AS INTEGER)) as maxCod
-      FROM TestCase
-      WHERE proiectId = ${params.id} AND cod LIKE 'TC-%'
-    `;
-    let maxNumar = result[0]?.maxCod ?? 0;
+    const errors: string[] = [];
+    const testeDeImportat: Array<{
+      titlu: string;
+      mediu: string;
+      pasi: string;
+      rezultatAsteptat: string;
+      rezultatObtinut: string;
+      tipTestare: string;
+      prioritate: string;
+    }> = [];
 
     for (let i = 1; i < rows.length; i++) {
       const cols = rows[i];
@@ -35,47 +36,100 @@ export async function POST({ locals, params, request }) {
       const tipTestareRaw = (cols[6]?.trim() || '').toLowerCase();
       const tipTestare = tipTestareRaw === 'automata' || tipTestareRaw === 'automată' ? 'automata' : 'manuala';
       const prioritateRaw = (cols[7]?.trim() || '').toLowerCase();
-      const prioritateValide = ['critica', 'inalta', 'medie', 'scăzuta'];
-      const prioritate = prioritateValide.includes(prioritateRaw) ? prioritateRaw : 'medie';
+      const prioritateMap: Record<string, string> = {
+        critica: 'critica',
+        inalta: 'inalta',
+        medie: 'medie',
+        scazuta: 'scăzuta',
+        scăzuta: 'scăzuta'
+      };
+      const prioritate = prioritateMap[prioritateRaw] || 'medie';
 
       if (!titlu || !mediu || !pasi || !rezultatAsteptat) {
         errors.push(`Linia ${i + 1}: câmpuri obligatorii lipsă (Titlu, Mediu, Pași, Rezultat Așteptat)`);
         continue;
       }
 
-      try {
-        maxNumar++;
-        const test = await tx.testCase.create({
-          data: {
-            cod: `TC-${maxNumar}`,
-            titlu,
-            mediu,
-            pasi,
-            rezultatAsteptat,
-            rezultatObtinut: cols[5]?.trim() || '',
-            tipTestare,
-            prioritate,
-            proiectId: params.id
-          }
-        });
-        imported.push(test);
-      } catch (e: any) {
-        errors.push(`Linia ${i + 1}: eroare la salvare — ${e.message}`);
-      }
+      testeDeImportat.push({
+        titlu,
+        mediu,
+        pasi,
+        rezultatAsteptat,
+        rezultatObtinut: cols[5]?.trim() || '',
+        tipTestare,
+        prioritate
+      });
     }
-  });
 
-  return json({
-    imported: imported.length,
-    errors: errors.length > 0 ? errors : undefined
-  });
+    if (testeDeImportat.length === 0) {
+      return json({ imported: 0, errors });
+    }
+
+    const imported = await prisma.$transaction(async (tx) => {
+      const existingCodes = await tx.testCase.findMany({
+        where: { proiectId: params.id, cod: { startsWith: 'TC-' } },
+        select: { cod: true }
+      });
+
+      let maxNumar = existingCodes.reduce((max, test) => {
+        const parsed = Number.parseInt(test.cod.replace(/^TC-/, ''), 10);
+        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+      }, 0);
+
+      const created = [];
+      for (const test of testeDeImportat) {
+        maxNumar += 1;
+        created.push(
+          await tx.testCase.create({
+            data: {
+              ...test,
+              cod: `TC-${maxNumar}`,
+              proiectId: params.id
+            }
+          })
+        );
+      }
+      return created;
+    });
+
+    return json({
+      imported: imported.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Import CSV failed', error);
+    return json({ error: 'Importul CSV a eșuat. Verificați formatul fișierului și încercați din nou.' }, { status: 500 });
+  }
+}
+
+function detectDelimiter(csv: string): ',' | ';' {
+  const firstLine = csv.split(/\r?\n/).find((line) => line.trim()) || '';
+  let commaCount = 0;
+  let semicolonCount = 0;
+  let inQuotes = false;
+
+  for (let i = 0; i < firstLine.length; i++) {
+    const ch = firstLine[i];
+    if (ch === '"') {
+      if (inQuotes && firstLine[i + 1] === '"') i++;
+      else inQuotes = !inQuotes;
+    } else if (!inQuotes && ch === ',') {
+      commaCount += 1;
+    } else if (!inQuotes && ch === ';') {
+      semicolonCount += 1;
+    }
+  }
+
+  return semicolonCount > commaCount ? ';' : ',';
 }
 
 function parseCSV(csv: string): string[][] {
+  const delimiter = detectDelimiter(csv);
   const rows: string[][] = [];
   let currentRow: string[] = [];
   let current = '';
   let inQuotes = false;
+  csv = csv.replace(/^\uFEFF/, '');
 
   for (let i = 0; i < csv.length; i++) {
     const ch = csv[i];
@@ -86,7 +140,7 @@ function parseCSV(csv: string): string[][] {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (ch === ',' && !inQuotes) {
+    } else if (ch === delimiter && !inQuotes) {
       currentRow.push(current.trim());
       current = '';
     } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
