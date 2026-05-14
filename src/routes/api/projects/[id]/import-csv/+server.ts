@@ -33,15 +33,21 @@ export async function POST({ locals, params, request }) {
       const mediu = cols[2]?.trim();
       const pasi = cols[3]?.trim();
       const rezultatAsteptat = cols[4]?.trim();
-      const tipTestareRaw = (cols[6]?.trim() || '').toLowerCase();
-      const tipTestare = tipTestareRaw === 'automata' || tipTestareRaw === 'automată' ? 'automata' : 'manuala';
-      const prioritateRaw = (cols[7]?.trim() || '').toLowerCase();
+      const tipTestareRaw = normalizeCsvValue(cols[6]);
+      const tipTestare = ['automata', 'automat', 'automated', 'automation'].includes(tipTestareRaw) ? 'automata' : 'manuala';
+      const prioritateRaw = normalizeCsvValue(cols[7]);
       const prioritateMap: Record<string, string> = {
         critica: 'critica',
+        critic: 'critica',
+        critical: 'critica',
         inalta: 'inalta',
+        inalt: 'inalta',
+        high: 'inalta',
         medie: 'medie',
+        medium: 'medie',
         scazuta: 'scăzuta',
-        scăzuta: 'scăzuta'
+        scazut: 'scăzuta',
+        low: 'scăzuta'
       };
       const prioritate = prioritateMap[prioritateRaw] || 'medie';
 
@@ -121,6 +127,14 @@ function detectDelimiter(csv: string): ',' | ';' {
   }
 
   return semicolonCount > commaCount ? ';' : ',';
+}
+
+function normalizeCsvValue(value: string | undefined): string {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function parseCSV(csv: string): string[][] {
