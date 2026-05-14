@@ -96,7 +96,8 @@ Pentru producție, aplicația folosește schema `prisma/schema.vercel.prisma`, c
 
 ```env
 JWT_SECRET=un-secret-sigur-si-lung
-DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
+DATABASE_URL=postgresql://user:password@pooled.db.prisma.io:5432/database?sslmode=require
+DIRECT_URL=postgresql://user:password@db.prisma.io:5432/database?sslmode=require
 ```
 
 Poți crea baza de date din Vercel Marketplace, Neon, Supabase sau orice provider PostgreSQL. La deploy, comanda `npm run vercel-build` rulează `prisma generate`, apoi `prisma db push` pentru a crea/actualiza tabelele.
