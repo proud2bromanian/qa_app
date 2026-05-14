@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "node -v && prisma generate && vite build",
-    "vercel-build": "node -v && prisma generate --schema=prisma/schema.vercel.prisma && prisma db push --schema=prisma/schema.vercel.prisma && vite build",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "preview": "vite preview",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
