@@ -25,7 +25,7 @@ function createPrisma(): PrismaClient {
   if (globalForPrisma.__prisma) return globalForPrisma.__prisma;
   ensureDatabaseUrl();
   const client = new PrismaClient();
-  if (process.env.NODE_ENV !== 'production') globalForPrisma.__prisma = client;
+  globalForPrisma.__prisma = client;
   return client;
 }
 
