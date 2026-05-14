@@ -1,0 +1,155 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id       String @id @default(cuid())
+  email    String @unique
+  nume     String
+  parola   String
+  memberOf ProjectMember[]
+}
+
+model Project {
+  id        String @id @default(cuid())
+  nume      String
+  descriere String  @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  membri    ProjectMember[]
+  suite     TestSuite[]
+  teste     TestCase[]
+  executii  Execution[]
+  buguri    BugReport[]
+  invitari  Invitation[]
+}
+
+model ProjectMember {
+  id        String    @id @default(cuid())
+  userId    String
+  proiectId String
+  rol       String    @default("membru")
+  user      User      @relation(fields: [userId], references: [id])
+  proiect   Project   @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  @@unique([userId, proiectId])
+  @@index([proiectId])
+}
+
+model Invitation {
+  id        String   @id @default(cuid())
+  cod       String   @unique
+  proiectId String
+  expiraLa  DateTime
+  activa    Boolean  @default(true)
+  proiect   Project  @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  @@index([proiectId])
+  @@index([cod, activa])
+}
+
+model TestSuite {
+  id          String   @id @default(cuid())
+  nume        String
+  descriere   String   @default("")
+  proiectId   String
+  proiect     Project  @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  teste       TestSuiteToTestCase[]
+  executii    Execution[]
+  @@index([proiectId])
+}
+
+model TestCase {
+  id          String   @id @default(cuid())
+  cod         String   @default("")
+  titlu       String
+  mediu       String
+  pasi        String
+  rezultatAsteptat String
+  rezultatObtinut  String @default("")
+  tipTestare  String  @default("manuala")
+  prioritate  String  @default("medie")
+  proiectId   String
+  proiect     Project @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  suite       TestSuiteToTestCase[]
+  executii    ExecutionResult[]
+  buguri      BugReport[]
+  atasamente  TestCaseAttachment[]
+  @@index([proiectId])
+  @@index([proiectId, cod])
+}
+
+model TestCaseAttachment {
+  id         String   @id @default(cuid())
+  testCaseId String
+  cale       String
+  testCase   TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  @@index([testCaseId])
+}
+
+model TestSuiteToTestCase {
+  id         String    @id @default(cuid())
+  suiteId    String
+  testId     String
+  ordine     Int       @default(0)
+  suite      TestSuite @relation(fields: [suiteId], references: [id], onDelete: Cascade)
+  test       TestCase  @relation(fields: [testId], references: [id], onDelete: Cascade)
+  @@unique([suiteId, testId])
+  @@index([suiteId])
+  @@index([testId])
+}
+
+model Execution {
+  id        String   @id @default(cuid())
+  nume      String
+  proiectId String
+  suiteId   String?
+  status    String   @default("in_progres")
+  createdAt DateTime @default(now())
+  proiect   Project  @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  suite     TestSuite? @relation(fields: [suiteId], references: [id])
+  rezultate ExecutionResult[]
+  @@index([proiectId])
+  @@index([proiectId, createdAt])
+}
+
+model ExecutionResult {
+  id                String    @id @default(cuid())
+  executieId        String
+  testId            String
+  status            String    @default("netestat")
+  cod               String    @default("")
+  titlu             String    @default("")
+  mediu             String    @default("")
+  pasi              String    @default("")
+  rezultatAsteptat  String    @default("")
+  rezultatObtinut   String    @default("")
+  dovezi            String    @default("")
+  executie          Execution @relation(fields: [executieId], references: [id], onDelete: Cascade)
+  test              TestCase  @relation(fields: [testId], references: [id])
+  buguri            BugReport[]
+  @@unique([executieId, testId])
+  @@index([executieId])
+  @@index([testId])
+}
+
+model BugReport {
+  id                String          @id @default(cuid())
+  titlu             String
+  descriere         String
+  status            String          @default("deschis")
+  severitate        String          @default("moderata")
+  testId            String?
+  executionResultId String?
+  proiectId         String
+  createdAt         DateTime        @default(now())
+  test              TestCase?       @relation(fields: [testId], references: [id])
+  executionResult   ExecutionResult? @relation(fields: [executionResultId], references: [id])
+  proiect           Project         @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  @@index([proiectId])
+  @@index([proiectId, status])
+  @@index([testId])
+}

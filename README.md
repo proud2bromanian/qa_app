@@ -55,7 +55,7 @@ Aplicație web pentru gestionarea testelor de calitate (QA), construită cu Svel
 | Framework | SvelteKit 2 |
 | Limbaj | TypeScript |
 | Stil | Tailwind CSS 4 |
-| Bază de date | SQLite via Prisma |
+| Bază de date | SQLite local, PostgreSQL pe Vercel via Prisma |
 | Autentificare | JWT + bcrypt |
 | Runtime | Node.js |
 
@@ -87,6 +87,19 @@ Creează un fișier `.env` în rădăcina proiectului:
 ```env
 JWT_SECRET=un-secret-sigur-si-lung
 ```
+
+## Deploy pe Vercel
+
+Pentru producție, aplicația folosește schema `prisma/schema.vercel.prisma`, care este configurată pentru PostgreSQL. SQLite (`prisma/dev.db`) este doar pentru dezvoltare locală și nu este persistent pe Vercel.
+
+În Vercel setează variabilele de mediu:
+
+```env
+JWT_SECRET=un-secret-sigur-si-lung
+DATABASE_URL=postgresql://user:password@host:5432/database?sslmode=require
+```
+
+Poți crea baza de date din Vercel Marketplace, Neon, Supabase sau orice provider PostgreSQL. La deploy, comanda `npm run vercel-build` rulează `prisma generate`, apoi `prisma db push` pentru a crea/actualiza tabelele.
 
 ## Structura Proiectului
 

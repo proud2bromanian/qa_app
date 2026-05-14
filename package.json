@@ -9,11 +9,13 @@
   "scripts": {
     "dev": "vite dev",
     "build": "node -v && prisma generate && vite build",
-    "vercel-build": "npm run build",
+    "vercel-build": "node -v && prisma generate --schema=prisma/schema.vercel.prisma && prisma db push --schema=prisma/schema.vercel.prisma && vite build",
     "preview": "vite preview",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "db:generate:vercel": "prisma generate --schema=prisma/schema.vercel.prisma",
+    "db:push": "prisma db push",
+    "db:push:vercel": "prisma db push --schema=prisma/schema.vercel.prisma"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^3.3.0",
