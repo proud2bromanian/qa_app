@@ -65,40 +65,40 @@ export async function POST({ locals, params, request }) {
       return json({ imported: 0, errors });
     }
 
-    const imported = await prisma.$transaction(async (tx) => {
-      const existingCodes = await tx.testCase.findMany({
-        where: { proiectId: params.id, cod: { startsWith: 'TC-' } },
-        select: { cod: true }
-      });
-
-      let maxNumar = existingCodes.reduce((max, test) => {
-        const parsed = Number.parseInt(test.cod.replace(/^TC-/, ''), 10);
-        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
-      }, 0);
-
-      const created = [];
-      for (const test of testeDeImportat) {
-        maxNumar += 1;
-        created.push(
-          await tx.testCase.create({
-            data: {
-              ...test,
-              cod: `TC-${maxNumar}`,
-              proiectId: params.id
-            }
-          })
-        );
-      }
-      return created;
+    const existingCodes = await prisma.testCase.findMany({
+      where: { proiectId: params.id, cod: { startsWith: 'TC-' } },
+      select: { cod: true }
     });
 
+    let maxNumar = existingCodes.reduce((max, test) => {
+      const parsed = Number.parseInt(test.cod.replace(/^TC-/, ''), 10);
+      return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+    }, 0);
+
+    const data = testeDeImportat.map((test) => {
+      maxNumar += 1;
+      return {
+        ...test,
+        cod: `TC-${maxNumar}`,
+        proiectId: params.id
+      };
+    });
+
+    let imported = 0;
+    for (let i = 0; i < data.length; i += 100) {
+      const batch = data.slice(i, i + 100);
+      const result = await prisma.testCase.createMany({ data: batch });
+      imported += result.count;
+    }
+
     return json({
-      imported: imported.length,
+      imported,
       errors: errors.length > 0 ? errors : undefined
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Eroare necunoscută';
     console.error('Import CSV failed', error);
-    return json({ error: 'Importul CSV a eșuat. Verificați formatul fișierului și încercați din nou.' }, { status: 500 });
+    return json({ error: `Importul CSV a eșuat: ${message}` }, { status: 500 });
   }
 }
 
