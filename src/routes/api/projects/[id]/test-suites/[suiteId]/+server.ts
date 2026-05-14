@@ -57,7 +57,10 @@ export async function DELETE({ locals, params }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
   const { autorizat } = await verificaMembruProiect(locals.user.id, params.id);
   if (!autorizat) return json({ error: 'Nu aveți acces la acest proiect' }, { status: 403 });
-  await prisma.$executeRawUnsafe(`UPDATE Execution SET suiteId = NULL WHERE suiteId = ?`, params.suiteId);
+  await prisma.execution.updateMany({
+    where: { suiteId: params.suiteId },
+    data: { suiteId: null }
+  });
   await prisma.testSuiteToTestCase.deleteMany({ where: { suiteId: params.suiteId } });
   await prisma.testSuite.delete({ where: { id: params.suiteId } });
   return json({ success: true });

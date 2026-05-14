@@ -1,9 +1,11 @@
 import { json } from '@sveltejs/kit';
 import prisma from '$lib/server/prisma';
 import { verificaMembruProiect } from '$lib/server/auth';
-import { writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
+import {
+  filtreazaFisiereIncarcate,
+  salveazaAtasamenteCaDataUrls,
+  valideazaAtasamenteImagine
+} from '$lib/server/attachments';
 
 export async function GET({ locals, params }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
@@ -36,17 +38,9 @@ export async function PATCH({ locals, params, request }) {
     if (formData.get('prioritate')) data.prioritate = formData.get('prioritate') as string;
 
     const files = formData.getAll('screenshot') as File[];
-    const newFiles = files.filter(f => f.size > 0);
-
-    for (const file of newFiles) {
-      if (file.size > 5 * 1024 * 1024) {
-        return json({ error: `Fișierul ${file.name} depășește 5MB` }, { status: 400 });
-      }
-      const allowedTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-      if (!allowedTypes.has(file.type)) {
-        return json({ error: `Tip nepermis: ${file.name}. Folosiți PNG, JPEG, GIF sau WebP.` }, { status: 400 });
-      }
-    }
+    const newFiles = filtreazaFisiereIncarcate(files);
+    const validare = valideazaAtasamenteImagine(newFiles);
+    if (!validare.valid) return json({ error: validare.error }, { status: 400 });
 
     const pastreaza = formData.get('pastreazaAtasamente') as string;
     const idsPastrate: string[] = pastreaza ? JSON.parse(pastreaza) : [];
@@ -62,15 +56,10 @@ export async function PATCH({ locals, params, request }) {
       await prisma.testCaseAttachment.deleteMany({ where: { id: { in: idsDeSters } } });
     }
 
-    for (const file of newFiles) {
-      const ext = file.name.split('.').pop() || 'png';
-      const fileName = `${randomUUID()}.${ext}`;
-      const dir = join(process.cwd(), 'static', 'uploads');
-      mkdirSync(dir, { recursive: true });
-      const buffer = Buffer.from(await file.arrayBuffer());
-      writeFileSync(join(dir, fileName), buffer);
+    const paths = await salveazaAtasamenteCaDataUrls(newFiles);
+    for (const cale of paths) {
       await prisma.testCaseAttachment.create({
-        data: { testCaseId: params.testId, cale: `/uploads/${fileName}` }
+        data: { testCaseId: params.testId, cale }
       });
     }
   } else {

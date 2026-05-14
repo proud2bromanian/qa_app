@@ -225,15 +225,25 @@
     }
 
     if (testEditatId) {
-      await fetch(`/api/projects/${projectId}/test-cases/${testEditatId}`, {
+      const response = await fetch(`/api/projects/${projectId}/test-cases/${testEditatId}`, {
         method: 'PATCH',
         body: formData
       });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        toast.error(result.error || 'Testul nu a putut fi actualizat');
+        return;
+      }
     } else {
-      await fetch(`/api/projects/${projectId}/test-cases`, {
+      const response = await fetch(`/api/projects/${projectId}/test-cases`, {
         method: 'POST',
         body: formData
       });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        toast.error(result.error || 'Testul nu a putut fi creat');
+        return;
+      }
     }
     reseteazaFormular();
     showAddTest = false;
