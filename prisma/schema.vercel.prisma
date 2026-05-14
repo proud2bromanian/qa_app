@@ -127,6 +127,7 @@ model ExecutionResult {
   pasi              String    @default("")
   rezultatAsteptat  String    @default("")
   rezultatObtinut   String    @default("")
+  prioritate        String    @default("medie")
   dovezi            String    @default("")
   executie          Execution @relation(fields: [executieId], references: [id], onDelete: Cascade)
   test              TestCase  @relation(fields: [testId], references: [id])

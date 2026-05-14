@@ -69,6 +69,7 @@ export interface ExecutionResult {
   pasi: string;
   rezultatAsteptat: string;
   rezultatObtinut: string;
+  prioritate: string;
   dovezi: string;
 }
 
