@@ -1,11 +1,11 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import prisma from '$lib/server/prisma';
-import { JWT_SECRET } from '$env/static/private';
 
 function getSecret(): string {
-  if (!JWT_SECRET) throw new Error('JWT_SECRET nu este setat. Adaugă-l în fișierul .env');
-  return JWT_SECRET;
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET nu este setat. Adaugă-l în .env sau în setările Vercel');
+  return secret;
 }
 
 export function hashPassword(password: string): Promise<string> {
