@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "prisma generate && vite build",
+    "build": "npx prisma generate && vite build",
     "preview": "vite preview",
-    "postinstall": "prisma generate",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push"
+    "postinstall": "npx prisma generate",
+    "db:generate": "npx prisma generate",
+    "db:push": "npx prisma db push"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^3.3.0",
