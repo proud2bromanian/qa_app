@@ -18,7 +18,6 @@
   let filtruPrioritate = '';
   let sortBy: 'cod' | 'titlu' | 'mediu' = 'cod';
   let expandedCards: string[] = [];
-  let scrollSentinel: HTMLElement | undefined;
   let showCsvInfo = false;
 
   let showAddTest = false;
@@ -107,24 +106,19 @@
       return 0;
     });
 
-  let observer: IntersectionObserver | undefined;
-
   onMount(() => {
     incarcaTeste();
 
-    observer = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting && nextCursor && !loadingMore) {
+    const handleScroll = () => {
+      if (!nextCursor || loadingMore) return;
+      const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+      if (scrollTop + clientHeight >= scrollHeight - 300) {
         incarcaMaiMulte();
       }
-    }, { rootMargin: '200px' });
-
-    return () => { observer?.disconnect(); };
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   });
-
-  $: if (scrollSentinel && observer) {
-    observer.disconnect();
-    observer.observe(scrollSentinel);
-  }
 
   function toggleExpand(id: string) {
     if (expandedCards.includes(id)) {
@@ -634,7 +628,6 @@
     <!-- Results count footer + scroll sentinel -->
     <div class="pt-2 text-center">
       {#if nextCursor}
-        <div class="h-1" bind:this={scrollSentinel}></div>
         {#if loadingMore}
           <div class="pb-3 text-center">
             <div class="inline-flex items-center gap-2 text-xs text-slate-400">
