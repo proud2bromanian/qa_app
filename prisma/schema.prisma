@@ -52,14 +52,17 @@ model Invitation {
 }
 
 model TestSuite {
-  id          String   @id @default(cuid())
-  nume        String
-  descriere   String   @default("")
-  proiectId   String
-  proiect     Project  @relation(fields: [proiectId], references: [id], onDelete: Cascade)
-  teste       TestSuiteToTestCase[]
-  executii    Execution[]
+  id              String                @id @default(cuid())
+  nume            String
+  descriere       String                @default("")
+  lastExecutionAt DateTime?
+  proiectId       String
+  proiect         Project               @relation(fields: [proiectId], references: [id], onDelete: Cascade)
+  teste           TestSuiteToTestCase[]
+  executii        Execution[]
+
   @@index([proiectId])
+  @@index([proiectId, lastExecutionAt])
 }
 
 model TestCase {

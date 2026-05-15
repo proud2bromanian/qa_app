@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { afterUpdate, onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { slide } from 'svelte/transition';
@@ -15,36 +15,125 @@
   let saved = false;
   let nextCursor: string | null = null;
   let totalTeste = 0;
+  let totalTesteFiltrate = 0;
   let loadingMore = false;
+  let loadingTests = false;
+  let eroareTeste = '';
+  const PAGE_SIZE = 50;
+  let mounted = false;
+  let availableQueryKey = '';
+  let currentAvailableQueryKey = '';
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadRequestId = 0;
+  let availableListEl: HTMLDivElement | null = null;
 
   const projectId = $page.params.id;
   const suiteId = $page.params.suiteId;
 
-  onMount(async () => {
-    try {
-      const [s, t] = await Promise.all([
-        fetch(`/api/projects/${projectId}/test-suites/${suiteId}`).then(r => r.json()),
-        fetch(`/api/projects/${projectId}/test-cases`).then(r => r.json())
-      ]);
-      if (s.error) return;
-      suita = s;
-      toateTestele = t.data || [];
-      nextCursor = t.nextCursor || null;
-      totalTeste = t.total || 0;
-      selectedTestIds = s.teste?.map((st: any) => st.testId) || [];
-    } catch { /* silently handle */ }
-    incarcare = false;
+  onMount(() => {
+    mounted = true;
+    currentAvailableQueryKey = availableQueryKey;
+    incarcaInitial();
+
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+    };
   });
 
-  async function incarcaMaiMulte() {
-    if (!nextCursor) return;
-    loadingMore = true;
-    const r = await fetch(`/api/projects/${projectId}/test-cases?cursor=${nextCursor}`);
-    const result = await r.json();
-    toateTestele = [...toateTestele, ...(result.data || [])];
-    nextCursor = result.nextCursor || null;
-    totalTeste = result.total || 0;
-    loadingMore = false;
+  async function incarcaInitial() {
+    try {
+      const s = await fetch(`/api/projects/${projectId}/test-suites/${suiteId}`).then(r => r.json());
+      if (s.error) return;
+      suita = s;
+      selectedTestIds = s.teste?.map((st: any) => st.testId) || [];
+      toateTestele = s.teste?.map((st: any) => st.test).filter(Boolean) || [];
+      await incarcaTeste();
+    } catch { /* silently handle */ }
+    finally {
+      incarcare = false;
+    }
+  }
+
+  afterUpdate(() => {
+    maybeLoadMoreAvailable();
+  });
+
+  function buildTestParams(options: { cursor?: string | null } = {}) {
+    const params = new URLSearchParams({
+      take: String(PAGE_SIZE),
+      sort: 'cod'
+    });
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (searchAvailable.trim()) params.set('search', searchAvailable.trim());
+    return params;
+  }
+
+  function selectedTestsSnapshot() {
+    return selectedTestIds
+      .map(id => toateTestele.find(t => t.id === id) || suita?.teste?.find((st: any) => st.testId === id)?.test)
+      .filter(Boolean);
+  }
+
+  function uniqueTests(tests: any[]) {
+    const map = new Map<string, any>();
+    for (const test of tests) {
+      if (test?.id) map.set(test.id, test);
+    }
+    return [...map.values()];
+  }
+
+  async function incarcaTeste(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    const requestId = ++loadRequestId;
+    if (append) loadingMore = true;
+    else {
+      loadingTests = true;
+      nextCursor = null;
+    }
+
+    try {
+      const params = buildTestParams({ cursor: append ? nextCursor : null });
+      const r = await fetch(`/api/projects/${projectId}/test-cases?${params.toString()}`);
+      if (!r.ok) throw new Error('Eroare la încărcarea testelor');
+      const result = await r.json();
+      if (requestId !== loadRequestId) return;
+
+      const data = result.data || [];
+      if (append) {
+        toateTestele = uniqueTests([...toateTestele, ...data]);
+      } else {
+        toateTestele = uniqueTests([...selectedTestsSnapshot(), ...data]);
+      }
+      nextCursor = result.nextCursor || null;
+      totalTesteFiltrate = result.total || 0;
+      totalTeste = result.totalAll ?? result.total ?? 0;
+      eroareTeste = '';
+    } catch {
+      if (requestId === loadRequestId) eroareTeste = 'Eroare la încărcarea testelor';
+    } finally {
+      if (requestId === loadRequestId) {
+        loadingMore = false;
+        loadingTests = false;
+      }
+    }
+  }
+
+  function scheduleTestReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      incarcaTeste();
+    }, 250);
+  }
+
+  function maybeLoadMoreAvailable() {
+    if (!availableListEl || !nextCursor || loadingMore || loadingTests || incarcare) return;
+    const remaining = availableListEl.scrollHeight - availableListEl.scrollTop - availableListEl.clientHeight;
+    if (remaining <= 160 || availableListEl.scrollHeight <= availableListEl.clientHeight + 20) incarcaUrmatoarele();
+  }
+
+  function incarcaUrmatoarele() {
+    if (!nextCursor || loadingMore || loadingTests || incarcare) return;
+    incarcaTeste({ append: true });
   }
 
   function toggleTest(testId: string) {
@@ -85,14 +174,9 @@
 
   $: testeDisponibile = toateTestele
     .filter(t => !selectedTestIds.includes(t.id))
-    .filter(t => {
-      if (!searchAvailable) return true;
-      const term = searchAvailable.toLowerCase();
-      return t.titlu?.toLowerCase().includes(term) || t.cod?.toLowerCase().includes(term) || t.mediu?.toLowerCase().includes(term);
-    })
     .sort((a, b) => {
-      const na = parseInt(a.cod?.replace('TC-', '') || '0', 10);
-      const nb = parseInt(b.cod?.replace('TC-', '') || '0', 10);
+      const na = a.codNumar ?? parseInt(a.cod?.replace('TC-', '') || '0', 10);
+      const nb = b.codNumar ?? parseInt(b.cod?.replace('TC-', '') || '0', 10);
       return na - nb;
     });
 
@@ -104,6 +188,12 @@
       const term = searchSelected.toLowerCase();
       return t.titlu?.toLowerCase().includes(term) || t.cod?.toLowerCase().includes(term) || t.mediu?.toLowerCase().includes(term);
     });
+
+  $: availableQueryKey = searchAvailable;
+  $: if (mounted && availableQueryKey !== currentAvailableQueryKey) {
+    currentAvailableQueryKey = availableQueryKey;
+    scheduleTestReload();
+  }
 
   async function salveazaSelectia() {
     saving = true;
@@ -181,7 +271,7 @@
         <span class="text-xs font-mono text-slate-600">
           <span class="font-semibold {selectedTestIds.length > 0 ? 'text-amber-600' : 'text-slate-400'}">{selectedTestIds.length}</span>
           <span class="text-slate-400"> selectate din </span>
-          <span class="text-slate-600">{toateTestele.length}</span>
+          <span class="text-slate-600">{totalTeste}</span>
           <span class="text-slate-400"> teste</span>
         </span>
       </div>
@@ -209,7 +299,7 @@
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-16 text-center">
       <p class="text-sm text-slate-500">Suita nu a fost găsită</p>
     </div>
-  {:else if toateTestele.length === 0}
+  {:else if totalTeste === 0}
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-16 text-center">
       <p class="text-sm text-slate-500">Nu există teste în acest proiect</p>
       <a href="/projects/{projectId}/test-cases" class="mt-3 inline-block text-xs font-medium text-slate-600 underline underline-offset-2 hover:text-slate-800">Mergi la teste</a>
@@ -220,7 +310,7 @@
       <div class="rounded-md border border-slate-200 bg-white">
         <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Disponibile</h3>
-          <span class="text-xs font-mono text-slate-300">{testeDisponibile.length}</span>
+          <span class="text-xs font-mono text-slate-300">{testeDisponibile.length} / {totalTesteFiltrate}</span>
         </div>
         <!-- Search -->
         <div class="border-b border-slate-100 px-3 py-2">
@@ -235,10 +325,24 @@
           </div>
         </div>
         <!-- List -->
-        <div class="max-h-[55vh] overflow-y-auto p-2">
-          {#if testeDisponibile.length === 0}
+        <div bind:this={availableListEl} on:scroll={maybeLoadMoreAvailable} class="max-h-[55vh] overflow-y-auto p-2">
+          {#if loadingTests && testeDisponibile.length === 0}
             <div class="py-8 text-center">
-              <p class="text-xs text-slate-300">{toateTestele.length > 0 ? 'Toate testele sunt selectate' : 'Niciun test disponibil'}</p>
+              <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Se încarcă...
+              </div>
+            </div>
+          {:else if eroareTeste}
+            <div class="py-8 text-center">
+              <p class="text-xs font-medium text-red-600">{eroareTeste}</p>
+              <button on:click={() => incarcaTeste()} class="mt-2 text-xs font-medium text-red-700 underline underline-offset-2 decoration-red-300 hover:decoration-red-600 cursor-pointer">
+                Reîncearcă
+              </button>
+            </div>
+          {:else if testeDisponibile.length === 0}
+            <div class="py-8 text-center">
+              <p class="text-xs text-slate-300">{searchAvailable ? 'Niciun test disponibil pentru căutare' : 'Toate testele sunt selectate'}</p>
             </div>
           {:else}
             {#each testeDisponibile as t (t.id)}
@@ -264,9 +368,14 @@
           {/if}
           {#if nextCursor}
             <div class="pt-2 text-center">
-              <button on:click={incarcaMaiMulte} disabled={loadingMore} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-50">
-                {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe teste'}
-              </button>
+              <div class="flex min-h-8 items-center justify-center">
+                {#if loadingMore}
+                  <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                    <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    Se încarcă...
+                  </div>
+                {/if}
+              </div>
             </div>
           {/if}
         </div>

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { afterUpdate, onMount } from 'svelte';
   import { page } from '$app/stores';
   import { slide } from 'svelte/transition';
   import { toast } from '$lib/stores/toast';
 
   let buguri: any[] = [];
   let incarcare = true;
+  let eroare = '';
   let searchTerm = '';
   let filtruStatus = '';
   let filtruSeveritate = '';
@@ -13,7 +14,21 @@
   let showStergeTot = false;
   let nextCursor: string | null = null;
   let totalBuguri = 0;
+  let totalFiltrat = 0;
   let loadingMore = false;
+  let countDeschise = 0;
+  let countInLucru = 0;
+  let countRezolvate = 0;
+  let countInchise = 0;
+  const PAGE_SIZE = 50;
+  let mounted = false;
+  let queryKey = '';
+  let currentQueryKey = '';
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadRequestId = 0;
+  let sentinelEl: HTMLDivElement | null = null;
+  let observedSentinel: HTMLDivElement | null = null;
+  let loadMoreObserver: IntersectionObserver | null = null;
 
   const projectId = $page.params.id;
 
@@ -63,26 +78,100 @@
     return sevConfig[severitate] || sevConfig.moderata;
   }
 
-  async function incarcaBuguri() {
-    const r = await fetch(`/api/projects/${projectId}/bugs`);
-    const result = await r.json();
-    buguri = result.data || [];
-    nextCursor = result.nextCursor || null;
-    totalBuguri = result.total || 0;
-    incarcare = false;
+  function buildBugParams(options: { cursor?: string | null } = {}) {
+    const params = new URLSearchParams({ take: String(PAGE_SIZE) });
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    if (filtruStatus) params.set('status', filtruStatus);
+    if (filtruSeveritate) params.set('severitate', filtruSeveritate);
+    return params;
   }
 
-  onMount(incarcaBuguri);
+  async function incarcaBuguri(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    const requestId = ++loadRequestId;
+    if (append) loadingMore = true;
+    else {
+      incarcare = true;
+      nextCursor = null;
+    }
 
-  async function incarcaMaiMulte() {
-    if (!nextCursor) return;
-    loadingMore = true;
-    const r = await fetch(`/api/projects/${projectId}/bugs?cursor=${nextCursor}`);
-    const result = await r.json();
-    buguri = [...buguri, ...(result.data || [])];
-    nextCursor = result.nextCursor || null;
-    totalBuguri = result.total || 0;
-    loadingMore = false;
+    try {
+      const params = buildBugParams({ cursor: append ? nextCursor : null });
+      const r = await fetch(`/api/projects/${projectId}/bugs?${params.toString()}`);
+      if (!r.ok) throw new Error('Eroare la încărcarea bug-urilor');
+      const result = await r.json();
+      if (requestId !== loadRequestId) return;
+
+      const data = result.data || [];
+      if (append) {
+        const idsExistente = new Set(buguri.map(b => b.id));
+        buguri = [...buguri, ...data.filter((b: any) => !idsExistente.has(b.id))];
+      } else {
+        buguri = data;
+      }
+      nextCursor = result.nextCursor || null;
+      totalFiltrat = result.total || 0;
+      totalBuguri = result.totalAll ?? result.total ?? 0;
+      countDeschise = result.counts?.deschis || 0;
+      countInLucru = result.counts?.in_lucru || 0;
+      countRezolvate = result.counts?.rezolvat || 0;
+      countInchise = result.counts?.inchis || 0;
+      eroare = '';
+    } catch {
+      if (requestId === loadRequestId) eroare = 'Eroare la încărcare';
+    } finally {
+      if (requestId === loadRequestId) {
+        incarcare = false;
+        loadingMore = false;
+      }
+    }
+  }
+
+  onMount(() => {
+    mounted = true;
+    currentQueryKey = queryKey;
+    loadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(entry => entry.isIntersecting)) incarcaUrmatoarele();
+      },
+      { rootMargin: '600px 0px' }
+    );
+    incarcaBuguri();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      if (loadMoreObserver) loadMoreObserver.disconnect();
+    };
+  });
+
+  afterUpdate(() => {
+    observeSentinel();
+    maybeLoadMoreFromScroll();
+  });
+
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      incarcaBuguri();
+    }, 250);
+  }
+
+  function observeSentinel() {
+    if (!loadMoreObserver || sentinelEl === observedSentinel) return;
+    if (observedSentinel) loadMoreObserver.unobserve(observedSentinel);
+    observedSentinel = sentinelEl;
+    if (observedSentinel) loadMoreObserver.observe(observedSentinel);
+  }
+
+  function maybeLoadMoreFromScroll() {
+    if (!sentinelEl || !nextCursor || loadingMore || incarcare) return;
+    const rect = sentinelEl.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 600) incarcaUrmatoarele();
+  }
+
+  function incarcaUrmatoarele() {
+    if (!nextCursor || loadingMore || incarcare) return;
+    incarcaBuguri({ append: true });
   }
 
   function toggleExpand(id: string) {
@@ -124,23 +213,13 @@
     return new Date(iso).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
-  $: buguriFiltrate = buguri.filter(b => {
-    if (filtruStatus && b.status !== filtruStatus) return false;
-    if (filtruSeveritate && b.severitate !== filtruSeveritate) return false;
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      const inTitlu = b.titlu?.toLowerCase().includes(term);
-      const inDesc = b.descriere?.toLowerCase().includes(term);
-      const inCod = b.test?.cod?.toLowerCase().includes(term);
-      if (!inTitlu && !inDesc && !inCod) return false;
-    }
-    return true;
-  });
-
-  $: countDeschise = buguri.filter(b => b.status === 'deschis').length;
-  $: countInLucru = buguri.filter(b => b.status === 'in_lucru').length;
-  $: countRezolvate = buguri.filter(b => b.status === 'rezolvat').length;
-  $: countInchise = buguri.filter(b => b.status === 'inchis').length;
+  $: buguriFiltrate = buguri;
+  $: filtreActive = !!searchTerm.trim() || !!filtruStatus || !!filtruSeveritate;
+  $: queryKey = `${searchTerm}|${filtruStatus}|${filtruSeveritate}`;
+  $: if (mounted && queryKey !== currentQueryKey) {
+    currentQueryKey = queryKey;
+    scheduleReload();
+  }
 
   function handleSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -172,9 +251,13 @@
         <span class="text-sky-600">{countRezolvate} rezolvate</span>
         <span class="text-slate-200">|</span>
         <span class="text-emerald-600">{countInchise} închise</span>
+        {#if filtreActive}
+          <span class="text-slate-200">|</span>
+          <span class="text-amber-600">{totalFiltrat} rezultate</span>
+        {/if}
       </div>
     </div>
-    {#if buguri.length > 0}
+    {#if totalBuguri > 0}
       <button on:click={() => showStergeTot = true} class="inline-flex items-center gap-1.5 rounded-md border border-rose-200 bg-white px-3.5 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer">
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
         Șterge tot
@@ -183,7 +266,7 @@
   </div>
 
   <!-- Search & Filters -->
-  {#if buguri.length > 0}
+  {#if totalBuguri > 0 || filtreActive}
     <div class="flex items-center gap-3">
       <div class="relative flex-1 max-w-md">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -223,7 +306,14 @@
         Se încarcă...
       </div>
     </div>
-  {:else if buguri.length === 0}
+  {:else if eroare}
+    <div class="rounded-lg border border-red-100 bg-red-50/70 py-12 text-center">
+      <p class="text-sm font-medium text-red-700">{eroare}</p>
+      <button on:click={() => incarcaBuguri()} class="mt-3 text-xs font-semibold text-red-700 underline underline-offset-2 decoration-red-300 hover:decoration-red-600 cursor-pointer">
+        Reîncearcă
+      </button>
+    </div>
+  {:else if totalBuguri === 0}
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-20 text-center">
       <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-50">
         <svg class="h-6 w-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -323,12 +413,17 @@
     <div class="pt-2 text-center">
       {#if nextCursor}
         <div class="pb-3">
-          <button on:click={incarcaMaiMulte} disabled={loadingMore} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-50">
-            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
-          </button>
+          <div bind:this={sentinelEl} class="flex min-h-8 items-center justify-center">
+            {#if loadingMore}
+              <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Se încarcă...
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
-      <span class="text-xs font-mono text-slate-300">{buguriFiltrate.length} bug-uri</span>
+      <span class="text-xs font-mono text-slate-300">{buguri.length} din {totalFiltrat} bug-uri</span>
     </div>
   {/if}
 </div>

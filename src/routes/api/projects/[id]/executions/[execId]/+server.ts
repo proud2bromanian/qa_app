@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import prisma from '$lib/server/prisma';
 import { verificaMembruProiect } from '$lib/server/auth';
+import { refreshSuiteLastExecutionDate } from '$lib/server/test-suite-stats';
 
 export async function GET({ locals, params }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
@@ -45,6 +46,7 @@ export async function DELETE({ locals, params }) {
   }
 
   await prisma.execution.delete({ where: { id: params.execId } });
+  await refreshSuiteLastExecutionDate(execution.suiteId, params.id);
 
   return json({ success: true });
 }

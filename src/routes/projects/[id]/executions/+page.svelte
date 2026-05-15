@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { afterUpdate, onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { toast } from '$lib/stores/toast';
@@ -7,43 +7,127 @@
   let executii: any[] = [];
   let suite: any[] = [];
   let incarcare = true;
+  let eroare = '';
   let selectedSuiteId = '';
   let searchTerm = '';
   let showDeleteModal = false;
   let deleteExecId = '';
   let nextCursor: string | null = null;
   let totalExecutii = 0;
+  let totalFiltrat = 0;
+  let totalInProgres = 0;
   let loadingMore = false;
-  let suiteNextCursor: string | null = null;
+  const PAGE_SIZE = 50;
+  let mounted = false;
+  let queryKey = '';
+  let currentQueryKey = '';
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadRequestId = 0;
+  let sentinelEl: HTMLDivElement | null = null;
+  let observedSentinel: HTMLDivElement | null = null;
+  let loadMoreObserver: IntersectionObserver | null = null;
 
   const projectId = $page.params.id;
 
-  async function incarca() {
-    try {
-      const [e, s] = await Promise.all([
-        fetch(`/api/projects/${projectId}/executions`).then(r => r.json()),
-        fetch(`/api/projects/${projectId}/test-suites`).then(r => r.json())
-      ]);
-      executii = e.data || [];
-      nextCursor = e.nextCursor || null;
-      totalExecutii = e.total || 0;
-      suite = s.data || [];
-      suiteNextCursor = s.nextCursor || null;
-    } catch { /* silently handle */ }
-    incarcare = false;
+  function buildExecutionParams(options: { cursor?: string | null } = {}) {
+    const params = new URLSearchParams({ take: String(PAGE_SIZE) });
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    return params;
   }
 
-  onMount(incarca);
+  async function incarca(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    const requestId = ++loadRequestId;
+    if (append) loadingMore = true;
+    else {
+      incarcare = true;
+      nextCursor = null;
+    }
 
-  async function incarcaMaiMulte() {
-    if (!nextCursor) return;
-    loadingMore = true;
-    const r = await fetch(`/api/projects/${projectId}/executions?cursor=${nextCursor}`);
-    const result = await r.json();
-    executii = [...executii, ...(result.data || [])];
-    nextCursor = result.nextCursor || null;
-    totalExecutii = result.total || 0;
-    loadingMore = false;
+    try {
+      const params = buildExecutionParams({ cursor: append ? nextCursor : null });
+      const [e, s] = await Promise.all([
+        fetch(`/api/projects/${projectId}/executions?${params.toString()}`).then(r => {
+          if (!r.ok) throw new Error('Eroare la încărcarea execuțiilor');
+          return r.json();
+        }),
+        append
+          ? Promise.resolve(null)
+          : fetch(`/api/projects/${projectId}/test-suites?selectOptions=1`).then(r => {
+            if (!r.ok) throw new Error('Eroare la încărcarea suitelor');
+            return r.json();
+          })
+      ]);
+
+      if (requestId !== loadRequestId) return;
+      const data = e.data || [];
+      if (append) {
+        const idsExistente = new Set(executii.map(ex => ex.id));
+        executii = [...executii, ...data.filter((ex: any) => !idsExistente.has(ex.id))];
+      } else {
+        executii = data;
+      }
+      nextCursor = e.nextCursor || null;
+      totalFiltrat = e.total || 0;
+      totalExecutii = e.totalAll ?? e.total ?? 0;
+      totalInProgres = e.totalInProgres || 0;
+      if (s) suite = s.data || [];
+      eroare = '';
+    } catch {
+      if (requestId === loadRequestId) eroare = 'Eroare la încărcare';
+    } finally {
+      if (requestId === loadRequestId) {
+        incarcare = false;
+        loadingMore = false;
+      }
+    }
+  }
+
+  onMount(() => {
+    mounted = true;
+    currentQueryKey = queryKey;
+    loadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(entry => entry.isIntersecting)) incarcaUrmatoarele();
+      },
+      { rootMargin: '600px 0px' }
+    );
+    incarca();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      if (loadMoreObserver) loadMoreObserver.disconnect();
+    };
+  });
+
+  afterUpdate(() => {
+    observeSentinel();
+    maybeLoadMoreFromScroll();
+  });
+
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      incarca();
+    }, 250);
+  }
+
+  function observeSentinel() {
+    if (!loadMoreObserver || sentinelEl === observedSentinel) return;
+    if (observedSentinel) loadMoreObserver.unobserve(observedSentinel);
+    observedSentinel = sentinelEl;
+    if (observedSentinel) loadMoreObserver.observe(observedSentinel);
+  }
+
+  function maybeLoadMoreFromScroll() {
+    if (!sentinelEl || !nextCursor || loadingMore || incarcare) return;
+    const rect = sentinelEl.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 600) incarcaUrmatoarele();
+  }
+
+  function incarcaUrmatoarele() {
+    if (!nextCursor || loadingMore || incarcare) return;
+    incarca({ append: true });
   }
 
   async function startExecutie() {
@@ -116,13 +200,13 @@
     return new Date(iso).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
-  $: executiiFiltrate = executii.filter(e => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return e.nume?.toLowerCase().includes(term) || e.suite?.nume?.toLowerCase().includes(term);
-  });
-
-  $: totalInProgres = executii.filter(e => e.status === 'in_progres').length;
+  $: executiiFiltrate = executii;
+  $: filtreActive = !!searchTerm.trim();
+  $: queryKey = searchTerm;
+  $: if (mounted && queryKey !== currentQueryKey) {
+    currentQueryKey = queryKey;
+    scheduleReload();
+  }
 
   function handleSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -142,6 +226,10 @@
         {#if totalInProgres > 0}
           <span class="text-slate-200">|</span>
           <span class="text-amber-600">{totalInProgres} în curs</span>
+        {/if}
+        {#if filtreActive}
+          <span class="text-slate-200">|</span>
+          <span class="text-amber-600">{totalFiltrat} rezultate</span>
         {/if}
       </div>
     </div>
@@ -163,7 +251,7 @@
   </div>
 
   <!-- Search -->
-  {#if executii.length > 0}
+  {#if totalExecutii > 0 || searchTerm}
     <div class="relative max-w-md">
       <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
       <input
@@ -184,7 +272,14 @@
         Se încarcă...
       </div>
     </div>
-  {:else if executii.length === 0}
+  {:else if eroare}
+    <div class="rounded-lg border border-red-100 bg-red-50/70 py-12 text-center">
+      <p class="text-sm font-medium text-red-700">{eroare}</p>
+      <button on:click={() => incarca()} class="mt-3 text-xs font-semibold text-red-700 underline underline-offset-2 decoration-red-300 hover:decoration-red-600 cursor-pointer">
+        Reîncearcă
+      </button>
+    </div>
+  {:else if totalExecutii === 0}
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-20 text-center">
       <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100">
         <svg class="h-6 w-6 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -259,12 +354,17 @@
     <div class="pt-2 text-center">
       {#if nextCursor}
         <div class="pb-3">
-          <button on:click={incarcaMaiMulte} disabled={loadingMore} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-50">
-            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
-          </button>
+          <div bind:this={sentinelEl} class="flex min-h-8 items-center justify-center">
+            {#if loadingMore}
+              <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Se încarcă...
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
-      <span class="text-xs font-mono text-slate-300">{executiiFiltrate.length} execuții</span>
+      <span class="text-xs font-mono text-slate-300">{executii.length} din {totalFiltrat} execuții</span>
     </div>
   {/if}
 </div>

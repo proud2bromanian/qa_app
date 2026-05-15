@@ -1,18 +1,29 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { afterUpdate, onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { toast } from '$lib/stores/toast';
 
   let suite: any[] = [];
-  let executii: any[] = [];
   let incarcare = true;
+  let eroare = '';
   let searchTerm = '';
   let sortBy: 'nume' | 'teste' | 'data' = 'nume';
   let nextCursor: string | null = null;
   let totalSuite = 0;
+  let totalFiltrat = 0;
+  let totalTesteAcoperite = 0;
+  let suiteCuExecutii = 0;
   let loadingMore = false;
-  let execNextCursor: string | null = null;
+  const PAGE_SIZE = 50;
+  let mounted = false;
+  let queryKey = '';
+  let currentQueryKey = '';
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadRequestId = 0;
+  let sentinelEl: HTMLDivElement | null = null;
+  let observedSentinel: HTMLDivElement | null = null;
+  let loadMoreObserver: IntersectionObserver | null = null;
 
   let showModal = false;
   let editId: string | null = null;
@@ -21,37 +32,104 @@
 
   const projectId = $page.params.id;
 
-  async function incarca() {
+  function buildSuiteParams(options: { cursor?: string | null } = {}) {
+    const params = new URLSearchParams({
+      take: String(PAGE_SIZE),
+      sort: sortBy
+    });
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    return params;
+  }
+
+  async function incarca(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    const requestId = ++loadRequestId;
+    if (append) loadingMore = true;
+    else {
+      incarcare = true;
+      nextCursor = null;
+    }
+
     try {
-      const [s, e] = await Promise.all([
-        fetch(`/api/projects/${projectId}/test-suites`).then(r => r.json()),
-        fetch(`/api/projects/${projectId}/executions`).then(r => r.json())
-      ]);
-      suite = s.data || [];
-      nextCursor = s.nextCursor || null;
-      totalSuite = s.total || 0;
-      executii = e.data || [];
-      execNextCursor = e.nextCursor || null;
-    } catch { /* silently handle */ }
-    incarcare = false;
+      const params = buildSuiteParams({ cursor: append ? nextCursor : null });
+      const r = await fetch(`/api/projects/${projectId}/test-suites?${params.toString()}`);
+      if (!r.ok) throw new Error('Eroare la încărcare');
+
+      const result = await r.json();
+      if (requestId !== loadRequestId) return;
+
+      const data = result.data || [];
+      if (append) {
+        const idsExistente = new Set(suite.map(s => s.id));
+        suite = [...suite, ...data.filter((s: any) => !idsExistente.has(s.id))];
+      } else {
+        suite = data;
+      }
+      nextCursor = result.nextCursor || null;
+      totalFiltrat = result.total || 0;
+      totalSuite = result.totalAll ?? result.total ?? 0;
+      totalTesteAcoperite = result.totalTesteAcoperite || 0;
+      suiteCuExecutii = result.suiteCuExecutii || 0;
+      eroare = '';
+    } catch {
+      if (requestId === loadRequestId) eroare = 'Eroare la încărcare';
+    } finally {
+      if (requestId === loadRequestId) {
+        incarcare = false;
+        loadingMore = false;
+      }
+    }
   }
 
-  onMount(incarca);
+  onMount(() => {
+    mounted = true;
+    currentQueryKey = queryKey;
+    loadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(entry => entry.isIntersecting)) incarcaUrmatoarele();
+      },
+      { rootMargin: '600px 0px' }
+    );
+    incarca();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      if (loadMoreObserver) loadMoreObserver.disconnect();
+    };
+  });
 
-  async function incarcaMaiMulte() {
-    if (!nextCursor) return;
-    loadingMore = true;
-    const r = await fetch(`/api/projects/${projectId}/test-suites?cursor=${nextCursor}`);
-    const result = await r.json();
-    suite = [...suite, ...(result.data || [])];
-    nextCursor = result.nextCursor || null;
-    totalSuite = result.total || 0;
-    loadingMore = false;
+  afterUpdate(() => {
+    observeSentinel();
+    maybeLoadMoreFromScroll();
+  });
+
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      incarca();
+    }, 250);
   }
 
-  function ultimaExecutie(suiteId: string): any | null {
-    const found = executii.filter(e => e.suiteId === suiteId);
-    return found.length > 0 ? found[0] : null;
+  function observeSentinel() {
+    if (!loadMoreObserver || sentinelEl === observedSentinel) return;
+    if (observedSentinel) loadMoreObserver.unobserve(observedSentinel);
+    observedSentinel = sentinelEl;
+    if (observedSentinel) loadMoreObserver.observe(observedSentinel);
+  }
+
+  function maybeLoadMoreFromScroll() {
+    if (!sentinelEl || !nextCursor || loadingMore || incarcare) return;
+    const rect = sentinelEl.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 600) incarcaUrmatoarele();
+  }
+
+  function incarcaUrmatoarele() {
+    if (!nextCursor || loadingMore || incarcare) return;
+    incarca({ append: true });
+  }
+
+  function ultimaExecutie(s: any): any | null {
+    return s.executii?.[0] || null;
   }
 
   function statusCuloare(status: string): string {
@@ -70,22 +148,13 @@
     return new Date(iso).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
-  $: suiteFiltrate = suite
-    .filter(s => {
-      if (!searchTerm) return true;
-      const term = searchTerm.toLowerCase();
-      return s.nume?.toLowerCase().includes(term) || s.descriere?.toLowerCase().includes(term);
-    })
-    .sort((a, b) => {
-      if (sortBy === 'nume') return (a.nume || '').localeCompare(b.nume || '');
-      if (sortBy === 'teste') return (b._count?.teste || 0) - (a._count?.teste || 0);
-      const ea = ultimaExecutie(a.id);
-      const eb = ultimaExecutie(b.id);
-      return (eb ? new Date(eb.createdAt).getTime() : 0) - (ea ? new Date(ea.createdAt).getTime() : 0);
-    });
-
-  $: totalTesteAcoperite = suite.reduce((sum, s) => sum + (s._count?.teste || 0), 0);
-  $: suiteCuExecutii = suite.filter(s => ultimaExecutie(s.id)).length;
+  $: suiteFiltrate = suite;
+  $: filtreActive = !!searchTerm.trim();
+  $: queryKey = `${searchTerm}|${sortBy}`;
+  $: if (mounted && queryKey !== currentQueryKey) {
+    currentQueryKey = queryKey;
+    scheduleReload();
+  }
 
   function deschideModal(s?: any) {
     if (s) {
@@ -167,6 +236,10 @@
         <span class="text-amber-600">{totalTesteAcoperite} teste acoperite</span>
         <span class="text-slate-200">|</span>
         <span>{suiteCuExecutii} executate</span>
+        {#if filtreActive}
+          <span class="text-slate-200">|</span>
+          <span class="text-amber-600">{totalFiltrat} rezultate</span>
+        {/if}
       </div>
     </div>
     <button on:click={() => deschideModal()} class="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-all cursor-pointer">
@@ -205,7 +278,14 @@
         Se încarcă...
       </div>
     </div>
-  {:else if suite.length === 0}
+  {:else if eroare}
+    <div class="rounded-lg border border-red-100 bg-red-50/70 py-12 text-center">
+      <p class="text-sm font-medium text-red-700">{eroare}</p>
+      <button on:click={() => incarca()} class="mt-3 text-xs font-semibold text-red-700 underline underline-offset-2 decoration-red-300 hover:decoration-red-600 cursor-pointer">
+        Reîncearcă
+      </button>
+    </div>
+  {:else if totalSuite === 0}
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-20 text-center">
       <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100">
         <svg class="h-6 w-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
@@ -227,7 +307,7 @@
   {:else}
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each suiteFiltrate as s (s.id)}
-        {@const exec = ultimaExecutie(s.id)}
+        {@const exec = ultimaExecutie(s)}
         {@const testCount = s._count?.teste || 0}
         <div class="group rounded-md border border-slate-200 border-l-[3px] border-l-amber-400 bg-white hover:border-slate-300 transition-colors">
           <!-- Card Body -->
@@ -285,12 +365,17 @@
     <div class="pt-2 text-center">
       {#if nextCursor}
         <div class="pb-3">
-          <button on:click={incarcaMaiMulte} disabled={loadingMore} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-50">
-            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
-          </button>
+          <div bind:this={sentinelEl} class="flex min-h-8 items-center justify-center">
+            {#if loadingMore}
+              <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Se încarcă...
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
-      <span class="text-xs font-mono text-slate-300">{suiteFiltrate.length} suite</span>
+      <span class="text-xs font-mono text-slate-300">{suite.length} din {totalFiltrat} suite</span>
     </div>
   {/if}
 </div>

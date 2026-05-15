@@ -54,6 +54,7 @@ export interface TestSuite {
   id: string;
   nume: string;
   descriere: string;
+  lastExecutionAt?: string | null;
   proiectId: string;
   teste: TestSuiteToTestCase[];
   executii?: Execution[];
