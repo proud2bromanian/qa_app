@@ -13,8 +13,8 @@ export async function POST({ request, cookies }) {
   if (!parolaCurenta || !parolaNoua) {
     return json({ error: 'Toate câmpurile sunt obligatorii' }, { status: 400 });
   }
-  if (parolaNoua.length < 6) {
-    return json({ error: 'Noua parolă trebuie să aibă cel puțin 6 caractere' }, { status: 400 });
+  if (parolaNoua.length < 8) {
+    return json({ error: 'Noua parolă trebuie să aibă cel puțin 8 caractere' }, { status: 400 });
   }
 
   const user = await prisma.user.findUnique({ where: { id: payload.id } });
@@ -26,7 +26,8 @@ export async function POST({ request, cookies }) {
   const parolaNouaHash = await hashPassword(parolaNoua);
   await prisma.user.update({ where: { id: user.id }, data: { parola: parolaNouaHash } });
 
-  cookies.set('token', '', { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 0 });
+  const cookieOpts = { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', maxAge: 0 };
+  cookies.set('token', '', cookieOpts);
 
   return json({ success: true });
 }
