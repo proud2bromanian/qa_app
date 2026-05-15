@@ -44,6 +44,9 @@
   let currentQueryKey = '';
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
   let loadRequestId = 0;
+  let sentinelEl: HTMLDivElement | null = null;
+  let observedSentinel: HTMLDivElement | null = null;
+  let loadMoreObserver: IntersectionObserver | null = null;
 
   afterUpdate(() => {
     if (focusPasIndex !== null) {
@@ -52,6 +55,8 @@
       if (el) el.focus();
       focusPasIndex = null;
     }
+    observeSentinel();
+    maybeLoadMoreFromScroll();
   });
 
   let lightboxUrl = '';
@@ -132,9 +137,18 @@
   onMount(() => {
     mounted = true;
     currentQueryKey = queryKey;
+    loadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          incarcaUrmatoarele();
+        }
+      },
+      { rootMargin: '600px 0px' }
+    );
     incarcaTeste();
     return () => {
       if (reloadTimer) clearTimeout(reloadTimer);
+      if (loadMoreObserver) loadMoreObserver.disconnect();
     };
   });
 
@@ -143,6 +157,24 @@
     reloadTimer = setTimeout(() => {
       incarcaTeste();
     }, 250);
+  }
+
+  function observeSentinel() {
+    if (!loadMoreObserver || sentinelEl === observedSentinel) return;
+    if (observedSentinel) loadMoreObserver.unobserve(observedSentinel);
+    observedSentinel = sentinelEl;
+    if (observedSentinel) loadMoreObserver.observe(observedSentinel);
+  }
+
+  function maybeLoadMoreFromScroll() {
+    if (!sentinelEl || !nextCursor || loadingMore || incarcare) return;
+    const rect = sentinelEl.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 600) incarcaUrmatoarele();
+  }
+
+  function incarcaUrmatoarele() {
+    if (!nextCursor || loadingMore || incarcare) return;
+    incarcaTeste({ append: true });
   }
 
   function toggleExpand(id: string) {
@@ -746,12 +778,14 @@
     <div class="pt-2 text-center">
       {#if nextCursor}
         <div class="pb-3 text-center">
-          <button on:click={() => incarcaTeste({ append: true })} disabled={loadingMore} class="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 transition-colors cursor-pointer">
+          <div bind:this={sentinelEl} class="flex min-h-8 items-center justify-center">
             {#if loadingMore}
-              <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+                <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                Se încarcă...
+              </div>
             {/if}
-            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
-          </button>
+          </div>
         </div>
       {/if}
       <span class="text-xs font-mono text-slate-300">
