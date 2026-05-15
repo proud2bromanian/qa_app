@@ -638,7 +638,7 @@
         {/if}
       {/if}
       <span class="text-xs font-mono text-slate-300">
-        {testeFiltrate.length} din {totalTeste || teste.length} teste
+        {teste.length} din {totalTeste} teste
       </span>
     </div>
   {/if}
