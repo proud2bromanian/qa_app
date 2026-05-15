@@ -69,6 +69,7 @@ model TestSuite {
 model TestCase {
   id               String                @id @default(cuid())
   cod              String                @default("")
+  codNumar         Int                   @default(0)
   titlu            String
   mediu            String
   pasi             String
@@ -85,6 +86,7 @@ model TestCase {
 
   @@index([proiectId])
   @@index([proiectId, cod])
+  @@index([proiectId, codNumar, id])
 }
 
 model TestCaseAttachment {

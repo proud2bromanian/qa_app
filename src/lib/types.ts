@@ -30,6 +30,7 @@ export interface TestCaseAttachment {
 export interface TestCase {
   id: string;
   cod: string;
+  codNumar: number;
   titlu: string;
   mediu: string;
   pasi: string;

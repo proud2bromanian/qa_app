@@ -7,9 +7,12 @@
   let teste: any[] = [];
   let incarcare = true;
   let eroare = '';
+  let nextCursor: string | null = null;
   let totalTeste = 0;
+  let totalFiltrat = 0;
   let totalManual = 0;
   let totalAutomat = 0;
+  let loadingMore = false;
   let searchTerm = '';
   let filtruMediu = '';
   let filtruTipTestare = '';
@@ -36,6 +39,11 @@
   let previewUrls: string[] = [];
   let focusPasIndex: number | null = null;
   const PAGE_SIZE = 50;
+  let mounted = false;
+  let queryKey = '';
+  let currentQueryKey = '';
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loadRequestId = 0;
 
   afterUpdate(() => {
     if (focusPasIndex !== null) {
@@ -51,44 +59,61 @@
 
   const projectId = $page.params.id;
 
-  async function incarcaTeste() {
-    incarcare = true;
+  function buildTestCaseParams(options: { cursor?: string | null; selectIds?: boolean } = {}) {
+    const params = new URLSearchParams({
+      take: String(PAGE_SIZE),
+      sort: sortBy
+    });
+
+    if (options.cursor) params.set('cursor', options.cursor);
+    if (options.selectIds) params.set('selectIds', '1');
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    if (filtruMediu.trim()) params.set('mediu', filtruMediu.trim());
+    if (filtruTipTestare) params.set('tipTestare', filtruTipTestare);
+    if (filtruPrioritate) params.set('prioritate', filtruPrioritate);
+
+    return params;
+  }
+
+  async function incarcaTeste(options: { append?: boolean } = {}) {
+    const append = options.append === true;
+    const requestId = ++loadRequestId;
+    if (append) loadingMore = true;
+    else {
+      incarcare = true;
+      nextCursor = null;
+      selectedIds = [];
+    }
+
     try {
-      const toateTestele: any[] = [];
-      const idsIncarcate = new Set<string>();
-      const cursoriVizitati = new Set<string>();
-      let cursor: string | null = null;
+      const params = buildTestCaseParams({ cursor: append ? nextCursor : null });
+      const r = await fetch(`/api/projects/${projectId}/test-cases?${params.toString()}`);
+      if (!r.ok) throw new Error('Eroare la încărcare');
 
-      do {
-        const params = new URLSearchParams({ take: String(PAGE_SIZE) });
-        if (cursor) params.set('cursor', cursor);
+      const result = await r.json();
+      if (requestId !== loadRequestId) return;
 
-        const r = await fetch(`/api/projects/${projectId}/test-cases?${params.toString()}`);
-        if (!r.ok) throw new Error('Eroare la încărcare');
-
-        const result = await r.json();
-        for (const test of result.data || []) {
-          if (!idsIncarcate.has(test.id)) {
-            idsIncarcate.add(test.id);
-            toateTestele.push(test);
-          }
-        }
-
-        totalTeste = result.total || 0;
-        totalManual = result.totalManual || 0;
-        totalAutomat = result.totalAutomat || 0;
-
-        cursor = result.nextCursor || null;
-        if (cursor && cursoriVizitati.has(cursor)) cursor = null;
-        if (cursor) cursoriVizitati.add(cursor);
-      } while (cursor);
-
-      teste = toateTestele;
+      const data = result.data || [];
+      if (append) {
+        const idsExistente = new Set(teste.map(t => t.id));
+        teste = [...teste, ...data.filter((test: any) => !idsExistente.has(test.id))];
+      } else {
+        teste = data;
+      }
+      nextCursor = result.nextCursor || null;
+      totalFiltrat = result.total || 0;
+      totalTeste = result.totalAll ?? result.total ?? 0;
+      totalManual = result.totalManual || 0;
+      totalAutomat = result.totalAutomat || 0;
       eroare = '';
     } catch {
-      eroare = 'Eroare la încărcare';
+      if (requestId === loadRequestId) eroare = 'Eroare la încărcare';
+    } finally {
+      if (requestId === loadRequestId) {
+        incarcare = false;
+        loadingMore = false;
+      }
     }
-    incarcare = false;
   }
 
   function numarPasii(pasi: string): number {
@@ -96,33 +121,29 @@
     return pasi.split('\n').filter((p: string) => p.trim()).length;
   }
 
-  $: testeFiltrate = teste
-    .filter(t => {
-      if (filtruMediu && !t.mediu?.toLowerCase().includes(filtruMediu.toLowerCase())) return false;
-      if (filtruTipTestare && t.tipTestare !== filtruTipTestare) return false;
-      if (filtruPrioritate && t.prioritate !== filtruPrioritate) return false;
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        const inTitlu = t.titlu?.toLowerCase().includes(term);
-        const inCod = t.cod?.toLowerCase().includes(term);
-        const inPasi = t.pasi?.toLowerCase().includes(term);
-        const inMediu = t.mediu?.toLowerCase().includes(term);
-        if (!inTitlu && !inCod && !inPasi && !inMediu) return false;
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'cod') {
-        const na = parseInt(a.cod?.replace('TC-', '') || '0', 10);
-        const nb = parseInt(b.cod?.replace('TC-', '') || '0', 10);
-        return na - nb;
-      }
-      if (sortBy === 'titlu') return (a.titlu || '').localeCompare(b.titlu || '');
-      if (sortBy === 'mediu') return (a.mediu || '').localeCompare(b.mediu || '');
-      return 0;
-    });
+  $: testeFiltrate = teste;
+  $: filtreActive = !!(searchTerm.trim() || filtruMediu.trim() || filtruTipTestare || filtruPrioritate);
+  $: queryKey = `${searchTerm}|${filtruMediu}|${filtruTipTestare}|${filtruPrioritate}|${sortBy}`;
+  $: if (mounted && queryKey !== currentQueryKey) {
+    currentQueryKey = queryKey;
+    scheduleReload();
+  }
 
-  onMount(incarcaTeste);
+  onMount(() => {
+    mounted = true;
+    currentQueryKey = queryKey;
+    incarcaTeste();
+    return () => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+    };
+  });
+
+  function scheduleReload() {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      incarcaTeste();
+    }, 250);
+  }
 
   function toggleExpand(id: string) {
     if (expandedCards.includes(id)) {
@@ -356,13 +377,13 @@
   }
 
   async function selectAll() {
-    if (selectedIds.length === testeFiltrate.length && testeFiltrate.length > 0) {
-      // Already selected all filtered — fetch ALL from server
+    if (selectedIds.length === testeFiltrate.length && totalFiltrat > testeFiltrate.length) {
       try {
-        const r = await fetch(`/api/projects/${projectId}/test-cases?selectIds=1`);
+        const params = buildTestCaseParams({ selectIds: true });
+        const r = await fetch(`/api/projects/${projectId}/test-cases?${params.toString()}`);
         const data = await r.json();
         selectedIds = data.ids || [];
-        toast.info(`${selectedIds.length} teste selectate din total`);
+        toast.info(`${selectedIds.length} teste selectate`);
       } catch { toast.error('Eroare la selectare'); }
     } else {
       selectedIds = testeFiltrate.map(t => t.id);
@@ -415,9 +436,9 @@
         <span class="text-sky-600">{totalManual} manuale</span>
         <span class="text-slate-200">|</span>
         <span class="text-violet-600">{totalAutomat} automate</span>
-        {#if searchTerm || filtruMediu || filtruTipTestare || filtruPrioritate}
+        {#if filtreActive}
           <span class="text-slate-200">|</span>
-          <span class="text-amber-600">{testeFiltrate.length} afișate</span>
+          <span class="text-amber-600">{totalFiltrat} rezultate</span>
         {/if}
       </div>
     </div>
@@ -538,7 +559,14 @@
         Se încarcă...
       </div>
     </div>
-  {:else if teste.length === 0}
+  {:else if eroare}
+    <div class="rounded-lg border border-red-100 bg-red-50/70 py-12 text-center">
+      <p class="text-sm font-medium text-red-700">{eroare}</p>
+      <button on:click={() => incarcaTeste()} class="mt-3 text-xs font-semibold text-red-700 underline underline-offset-2 decoration-red-300 hover:decoration-red-600 cursor-pointer">
+        Reîncearcă
+      </button>
+    </div>
+  {:else if totalTeste === 0}
     <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 py-20 text-center">
       <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100">
         <svg class="h-6 w-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
@@ -703,7 +731,7 @@
         <div class="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-2xl shadow-slate-900/10">
           <span class="text-sm font-semibold text-slate-900">{selectedIds.length} selectate</span>
           <div class="h-5 w-px bg-slate-200"></div>
-          <button on:click={selectAll} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer transition-colors">{selectedIds.length === testeFiltrate.length && testeFiltrate.length > 0 ? 'Tot proiectul' : 'Toate vizibile'}</button>
+          <button on:click={selectAll} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer transition-colors">{selectedIds.length === testeFiltrate.length && totalFiltrat > testeFiltrate.length ? 'Toate rezultatele' : 'Toate vizibile'}</button>
           <button on:click={deselectAll} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer transition-colors">Deselectează</button>
           <div class="h-5 w-px bg-slate-200"></div>
           <button on:click={stergeSelectate} disabled={deletingBatch} class="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition-colors cursor-pointer">
@@ -716,8 +744,18 @@
 
     <!-- Results count footer -->
     <div class="pt-2 text-center">
+      {#if nextCursor}
+        <div class="pb-3 text-center">
+          <button on:click={() => incarcaTeste({ append: true })} disabled={loadingMore} class="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 transition-colors cursor-pointer">
+            {#if loadingMore}
+              <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            {/if}
+            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
+          </button>
+        </div>
+      {/if}
       <span class="text-xs font-mono text-slate-300">
-        {testeFiltrate.length} din {totalTeste} teste
+        {teste.length} din {totalFiltrat} teste
       </span>
     </div>
   {/if}

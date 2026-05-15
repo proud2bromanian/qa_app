@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import prisma from '$lib/server/prisma';
 import { verificaMembruProiect } from '$lib/server/auth';
+import { parseTestCaseNumber } from '$lib/server/test-case-codes';
 
 export async function POST({ locals, params, request }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
@@ -78,8 +79,8 @@ export async function POST({ locals, params, request }) {
     });
 
     let maxNumar = existingCodes.reduce((max, test) => {
-      const parsed = Number.parseInt(test.cod.replace(/^TC-/, ''), 10);
-      return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+      const parsed = parseTestCaseNumber(test.cod);
+      return Math.max(max, parsed);
     }, 0);
 
     const data = testeDeImportat.map((test) => {
@@ -87,6 +88,7 @@ export async function POST({ locals, params, request }) {
       return {
         ...test,
         cod: `TC-${maxNumar}`,
+        codNumar: maxNumar,
         proiectId: params.id
       };
     });

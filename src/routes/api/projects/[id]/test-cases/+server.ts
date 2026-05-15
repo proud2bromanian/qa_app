@@ -6,37 +6,47 @@ import {
   salveazaAtasamenteCaDataUrls,
   valideazaAtasamenteImagine
 } from '$lib/server/attachments';
-import { getNextCursor } from '$lib/server/pagination';
+import { ensureTestCaseCodeNumbers, parseTestCaseNumber } from '$lib/server/test-case-codes';
+
+const DEFAULT_TAKE = 50;
+const MAX_TAKE = 200;
 
 export async function GET({ locals, params, url }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
   const { autorizat } = await verificaMembruProiect(locals.user.id, params.id);
   if (!autorizat) return json({ error: 'Nu aveți acces la acest proiect' }, { status: 403 });
 
+  await ensureTestCaseCodeNumbers(params.id);
+
+  const take = clampTake(url.searchParams.get('take'));
+  const offset = Math.max(Number(url.searchParams.get('offset') ?? url.searchParams.get('cursor')) || 0, 0);
+  const where = buildWhere(params.id, url);
+  const orderBy = buildOrderBy(url.searchParams.get('sort'));
+
   if (url.searchParams.get('selectIds')) {
-    const ids = await prisma.testCase.findMany({ where: { proiectId: params.id }, select: { id: true } });
+    const ids = await prisma.testCase.findMany({ where, orderBy, select: { id: true } });
     return json({ ids: ids.map(t => t.id) });
   }
 
-  const take = Number(url.searchParams.get('take')) || 50;
-  const cursor = url.searchParams.get('cursor') || undefined;
-  const where = { proiectId: params.id };
+  const baseWhere = { proiectId: params.id };
 
-  const [total, totalManual, totalAutomat, items] = await Promise.all([
+  const [totalAll, total, totalManual, totalAutomat, items] = await Promise.all([
+    prisma.testCase.count({ where: baseWhere }),
     prisma.testCase.count({ where }),
-    prisma.testCase.count({ where: { ...where, tipTestare: { not: 'automata' } } }),
-    prisma.testCase.count({ where: { ...where, tipTestare: 'automata' } }),
+    prisma.testCase.count({ where: { ...baseWhere, tipTestare: { not: 'automata' } } }),
+    prisma.testCase.count({ where: { ...baseWhere, tipTestare: 'automata' } }),
     prisma.testCase.findMany({
       where,
-      take: take + 1,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      orderBy: { id: 'desc' },
+      skip: offset,
+      take,
+      orderBy,
       include: { atasamente: { select: { id: true, cale: true } } }
     })
   ]);
 
-  const nextCursor = getNextCursor(items, take);
-  return json({ data: items, nextCursor, total, totalManual, totalAutomat });
+  const nextOffset = offset + items.length;
+  const nextCursor = nextOffset < total ? String(nextOffset) : null;
+  return json({ data: items, nextCursor, total, totalAll, totalManual, totalAutomat });
 }
 
 export async function POST({ locals, params, request }) {
@@ -85,14 +95,15 @@ export async function POST({ locals, params, request }) {
         select: { cod: true }
       });
       const maxNumar = existingCodes.reduce((max, test) => {
-        const parsed = Number.parseInt(test.cod.replace(/^TC-/, ''), 10);
-        return Number.isFinite(parsed) ? Math.max(max, parsed) : max;
+        const parsed = parseTestCaseNumber(test.cod);
+        return Math.max(max, parsed);
       }, 0);
-      const cod = `TC-${maxNumar + 1}`;
+      const codNumar = maxNumar + 1;
+      const cod = `TC-${codNumar}`;
 
       return tx.testCase.create({
         data: {
-          cod, titlu, mediu, pasi, rezultatAsteptat,
+          cod, codNumar, titlu, mediu, pasi, rezultatAsteptat,
           rezultatObtinut: rezultatObtinut || '',
           tipTestare, prioritate, proiectId: params.id,
           atasamente: {
@@ -109,4 +120,47 @@ export async function POST({ locals, params, request }) {
     console.error('Create test case failed', error);
     return json({ error: `Crearea testului a eșuat: ${message}` }, { status: 500 });
   }
+}
+
+function clampTake(value: string | null): number {
+  const parsed = Number(value) || DEFAULT_TAKE;
+  return Math.min(Math.max(parsed, 1), MAX_TAKE);
+}
+
+function buildWhere(proiectId: string, url: URL): Record<string, any> {
+  const search = url.searchParams.get('search')?.trim() || '';
+  const mediu = url.searchParams.get('mediu')?.trim() || '';
+  const tipTestare = url.searchParams.get('tipTestare') || '';
+  const prioritate = url.searchParams.get('prioritate') || '';
+  const and: Record<string, any>[] = [];
+
+  if (search) {
+    and.push({
+      OR: [
+        { cod: containsText(search) },
+        { titlu: containsText(search) },
+        { pasi: containsText(search) },
+        { mediu: containsText(search) }
+      ]
+    });
+  }
+  if (mediu) and.push({ mediu: containsText(mediu) });
+  if (tipTestare) and.push({ tipTestare });
+  if (prioritate) and.push({ prioritate });
+
+  return and.length > 0 ? { proiectId, AND: and } : { proiectId };
+}
+
+function containsText(value: string) {
+  const databaseUrl = process.env.DATABASE_URL || '';
+  if (databaseUrl.startsWith('postgresql://') || databaseUrl.startsWith('postgres://')) {
+    return { contains: value, mode: 'insensitive' };
+  }
+  return { contains: value };
+}
+
+function buildOrderBy(sort: string | null) {
+  if (sort === 'titlu') return [{ titlu: 'asc' }, { codNumar: 'asc' }, { id: 'asc' }];
+  if (sort === 'mediu') return [{ mediu: 'asc' }, { codNumar: 'asc' }, { id: 'asc' }];
+  return [{ codNumar: 'asc' }, { cod: 'asc' }, { id: 'asc' }];
 }
