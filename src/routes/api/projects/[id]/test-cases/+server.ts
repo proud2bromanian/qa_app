@@ -16,8 +16,10 @@ export async function GET({ locals, params, url }) {
   const cursor = url.searchParams.get('cursor') || undefined;
   const where = { proiectId: params.id };
 
-  const [total, items] = await Promise.all([
+  const [total, totalManual, totalAutomat, items] = await Promise.all([
     prisma.testCase.count({ where }),
+    prisma.testCase.count({ where: { ...where, tipTestare: { not: 'automata' } } }),
+    prisma.testCase.count({ where: { ...where, tipTestare: 'automata' } }),
     prisma.testCase.findMany({
       where,
       take: take + 1,
@@ -28,7 +30,7 @@ export async function GET({ locals, params, url }) {
   ]);
 
   const nextCursor = items.length > take ? items.pop()?.id : null;
-  return json({ data: items, nextCursor, total });
+  return json({ data: items, nextCursor, total, totalManual, totalAutomat });
 }
 
 export async function POST({ locals, params, request }) {

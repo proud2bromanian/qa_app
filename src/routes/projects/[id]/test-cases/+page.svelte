@@ -9,6 +9,8 @@
   let eroare = '';
   let nextCursor: string | null = null;
   let totalTeste = 0;
+  let totalManual = 0;
+  let totalAutomat = 0;
   let loadingMore = false;
   let searchTerm = '';
   let filtruMediu = '';
@@ -16,6 +18,8 @@
   let filtruPrioritate = '';
   let sortBy: 'cod' | 'titlu' | 'mediu' = 'cod';
   let expandedCards: string[] = [];
+  let scrollSentinel: HTMLElement | undefined;
+  let showCsvInfo = false;
 
   let showAddTest = false;
   let testEditatId: string | null = null;
@@ -53,6 +57,8 @@
       teste = result.data || [];
       nextCursor = result.nextCursor || null;
       totalTeste = result.total || 0;
+      totalManual = result.totalManual || 0;
+      totalAutomat = result.totalAutomat || 0;
     } catch { eroare = 'Eroare la încărcare'; }
     incarcare = false;
   }
@@ -101,10 +107,24 @@
       return 0;
     });
 
-  $: totalManual = teste.filter(t => t.tipTestare !== 'automata').length;
-  $: totalAutomat = teste.filter(t => t.tipTestare === 'automata').length;
+  let observer: IntersectionObserver | undefined;
 
-  onMount(incarcaTeste);
+  onMount(() => {
+    incarcaTeste();
+
+    observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting && nextCursor && !loadingMore) {
+        incarcaMaiMulte();
+      }
+    }, { rootMargin: '200px' });
+
+    return () => { observer?.disconnect(); };
+  });
+
+  $: if (scrollSentinel && observer) {
+    observer.disconnect();
+    observer.observe(scrollSentinel);
+  }
 
   function toggleExpand(id: string) {
     if (expandedCards.includes(id)) {
@@ -330,7 +350,8 @@
     e.preventDefault();
     document.getElementById('search-input')?.focus();
   }
-}} />
+  if (e.key === 'Escape') showCsvInfo = false;
+}} on:click={() => { if (showCsvInfo) showCsvInfo = false; }} />
 
 <div class="space-y-5">
   <!-- Header -->
@@ -354,11 +375,58 @@
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         Export
       </button>
-      <label for="import-csv-input" class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer">
-        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-        Import
-      </label>
-      <input id="import-csv-input" type="file" accept=".csv" on:change={importCSV} class="hidden" />
+      <div class="relative">
+        <label for="import-csv-input" class="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer">
+          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+          Import
+        </label>
+        <input id="import-csv-input" type="file" accept=".csv" on:change={importCSV} class="hidden" />
+        <button type="button" on:click={() => showCsvInfo = !showCsvInfo} class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-slate-700 transition-colors cursor-pointer text-[10px] font-bold" title="Format CSV">?</button>
+        {#if showCsvInfo}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="absolute right-0 top-full mt-2 z-50 w-80 rounded-lg border border-slate-200 bg-white p-4 shadow-xl" on:click|stopPropagation>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-semibold text-slate-700">Format CSV necesar</span>
+              <button on:click={() => showCsvInfo = false} class="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div class="rounded bg-slate-50 border border-slate-100 px-3 py-2.5 mb-3">
+              <code class="text-[11px] text-slate-600 leading-relaxed whitespace-pre-wrap break-all">Titlu,Mediu,Pasi,Rezultat Asteptat,Rezultat Obtinut,Tip Testare,Prioritate</code>
+            </div>
+            <div class="space-y-1.5 text-[11px] text-slate-500">
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Titlu</span>
+                <span>obligatoriu — numele testului</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Mediu</span>
+                <span>obligatoriu — ex: Chrome 120</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Pasi</span>
+                <span>obligatoriu — separati cu linie noua</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Rez. Asteptat</span>
+                <span>obligatoriu</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Rez. Obtinut</span>
+                <span>optional</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Tip Testare</span>
+                <span>manuala / automata</span>
+              </div>
+              <div class="flex gap-2">
+                <span class="shrink-0 font-semibold text-slate-600 w-28">Prioritate</span>
+                <span>critica / inalta / medie / scazuta</span>
+              </div>
+            </div>
+          </div>
+        {/if}
+      </div>
       <button on:click={() => { reseteazaFormular(); showAddTest = true; }} class="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition-all cursor-pointer">
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Test Nou
@@ -563,13 +631,16 @@
       {/each}
     </div>
 
-    <!-- Results count footer -->
+    <!-- Results count footer + scroll sentinel -->
     <div class="pt-2 text-center">
       {#if nextCursor}
-        <div class="pb-3">
-          <button on:click={incarcaMaiMulte} disabled={loadingMore} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-50">
-            {loadingMore ? 'Se încarcă...' : 'Încarcă mai multe'}
-          </button>
+        <div class="pb-3" bind:this={scrollSentinel}>
+          {#if loadingMore}
+            <div class="inline-flex items-center gap-2 text-xs text-slate-400">
+              <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              Se încarcă...
+            </div>
+          {/if}
         </div>
       {/if}
       <span class="text-xs font-mono text-slate-300">
