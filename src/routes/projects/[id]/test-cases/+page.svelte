@@ -381,7 +381,7 @@
           Import
         </label>
         <input id="import-csv-input" type="file" accept=".csv" on:change={importCSV} class="hidden" />
-        <button type="button" on:click={() => showCsvInfo = !showCsvInfo} class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-slate-700 transition-colors cursor-pointer text-[10px] font-bold" title="Format CSV">?</button>
+        <button type="button" on:click|stopPropagation={() => showCsvInfo = !showCsvInfo} class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-200 text-slate-500 hover:bg-slate-300 hover:text-slate-700 transition-colors cursor-pointer text-[10px] font-bold" title="Format CSV">?</button>
         {#if showCsvInfo}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div class="absolute right-0 top-full mt-2 z-50 w-80 rounded-lg border border-slate-200 bg-white p-4 shadow-xl" on:click|stopPropagation>
@@ -634,14 +634,15 @@
     <!-- Results count footer + scroll sentinel -->
     <div class="pt-2 text-center">
       {#if nextCursor}
-        <div class="pb-3" bind:this={scrollSentinel}>
-          {#if loadingMore}
+        <div class="h-1" bind:this={scrollSentinel}></div>
+        {#if loadingMore}
+          <div class="pb-3 text-center">
             <div class="inline-flex items-center gap-2 text-xs text-slate-400">
               <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               Se încarcă...
             </div>
-          {/if}
-        </div>
+          </div>
+        {/if}
       {/if}
       <span class="text-xs font-mono text-slate-300">
         {testeFiltrate.length} din {totalTeste || teste.length} teste
