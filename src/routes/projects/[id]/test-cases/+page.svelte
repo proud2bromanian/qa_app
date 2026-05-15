@@ -7,11 +7,9 @@
   let teste: any[] = [];
   let incarcare = true;
   let eroare = '';
-  let nextCursor: string | null = null;
   let totalTeste = 0;
   let totalManual = 0;
   let totalAutomat = 0;
-  let loadingMore = false;
   let searchTerm = '';
   let filtruMediu = '';
   let filtruTipTestare = '';
@@ -37,6 +35,7 @@
   let testCloneAtasamenteIds: string[] = [];
   let previewUrls: string[] = [];
   let focusPasIndex: number | null = null;
+  const PAGE_SIZE = 50;
 
   afterUpdate(() => {
     if (focusPasIndex !== null) {
@@ -53,29 +52,43 @@
   const projectId = $page.params.id;
 
   async function incarcaTeste() {
+    incarcare = true;
     try {
-      const r = await fetch(`/api/projects/${projectId}/test-cases`);
-      const result = await r.json();
-      teste = result.data || [];
-      nextCursor = result.nextCursor || null;
-      totalTeste = result.total || 0;
-      totalManual = result.totalManual || 0;
-      totalAutomat = result.totalAutomat || 0;
-    } catch { eroare = 'Eroare la încărcare'; }
-    incarcare = false;
-  }
+      const toateTestele: any[] = [];
+      const idsIncarcate = new Set<string>();
+      const cursoriVizitati = new Set<string>();
+      let cursor: string | null = null;
 
-  async function incarcaMaiMulte() {
-    if (!nextCursor) return;
-    loadingMore = true;
-    try {
-      const r = await fetch(`/api/projects/${projectId}/test-cases?cursor=${nextCursor}`);
-      const result = await r.json();
-      teste = [...teste, ...(result.data || [])];
-      nextCursor = result.nextCursor || null;
-      totalTeste = result.total || 0;
-    } catch { /* silently handle */ }
-    loadingMore = false;
+      do {
+        const params = new URLSearchParams({ take: String(PAGE_SIZE) });
+        if (cursor) params.set('cursor', cursor);
+
+        const r = await fetch(`/api/projects/${projectId}/test-cases?${params.toString()}`);
+        if (!r.ok) throw new Error('Eroare la încărcare');
+
+        const result = await r.json();
+        for (const test of result.data || []) {
+          if (!idsIncarcate.has(test.id)) {
+            idsIncarcate.add(test.id);
+            toateTestele.push(test);
+          }
+        }
+
+        totalTeste = result.total || 0;
+        totalManual = result.totalManual || 0;
+        totalAutomat = result.totalAutomat || 0;
+
+        cursor = result.nextCursor || null;
+        if (cursor && cursoriVizitati.has(cursor)) cursor = null;
+        if (cursor) cursoriVizitati.add(cursor);
+      } while (cursor);
+
+      teste = toateTestele;
+      eroare = '';
+    } catch {
+      eroare = 'Eroare la încărcare';
+    }
+    incarcare = false;
   }
 
   function numarPasii(pasi: string): number {
@@ -109,32 +122,7 @@
       return 0;
     });
 
-  let sentinelEl: HTMLDivElement | null = null;
-
-  onMount(() => {
-    incarcaTeste();
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && nextCursor && !loadingMore) {
-          incarcaMaiMulte();
-        }
-      },
-      { rootMargin: '400px' }
-    );
-
-    // Observe sentinel once it's in DOM
-    const checkSentinel = () => {
-      if (sentinelEl) {
-        observer.observe(sentinelEl);
-      } else {
-        requestAnimationFrame(checkSentinel);
-      }
-    };
-    checkSentinel();
-
-    return () => observer.disconnect();
-  });
+  onMount(incarcaTeste);
 
   function toggleExpand(id: string) {
     if (expandedCards.includes(id)) {
@@ -726,19 +714,8 @@
       </div>
     {/if}
 
-    <!-- Results count footer + scroll sentinel -->
+    <!-- Results count footer -->
     <div class="pt-2 text-center">
-      {#if nextCursor}
-        {#if loadingMore}
-          <div class="pb-3 text-center">
-            <div class="inline-flex items-center gap-2 text-xs text-slate-400">
-              <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-              Se încarcă...
-            </div>
-          </div>
-        {/if}
-        <div bind:this={sentinelEl} class="h-1"></div>
-      {/if}
       <span class="text-xs font-mono text-slate-300">
         {testeFiltrate.length} din {totalTeste} teste
       </span>
