@@ -108,8 +108,6 @@
 
   let sentinelEl: HTMLDivElement | null = null;
 
-  let sentinelEl: HTMLDivElement | null = null;
-
   onMount(() => {
     incarcaTeste();
 

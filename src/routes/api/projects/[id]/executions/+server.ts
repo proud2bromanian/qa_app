@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import prisma from '$lib/server/prisma';
 import { verificaMembruProiect } from '$lib/server/auth';
+import { getNextCursor } from '$lib/server/pagination';
 
 export async function GET({ locals, params, url }) {
   if (!locals.user) return json({ error: 'Neautentificat' }, { status: 401 });
@@ -22,7 +23,7 @@ export async function GET({ locals, params, url }) {
     })
   ]);
 
-  const nextCursor = executii.length > take ? executii.pop()?.id : null;
+  const nextCursor = getNextCursor(executii, take);
   const data = executii.map(e => ({
     id: e.id,
     nume: e.nume,
