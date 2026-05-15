@@ -24,6 +24,11 @@ export async function PATCH({ locals, params, request }) {
   const { autorizat } = await verificaMembruProiect(locals.user.id, params.id);
   if (!autorizat) return json({ error: 'Nu aveți acces la acest proiect' }, { status: 403 });
 
+  const existing = await prisma.testCase.findFirst({
+    where: { id: params.testId, proiectId: params.id }
+  });
+  if (!existing) return json({ error: 'Test negăsit în acest proiect' }, { status: 404 });
+
   const contentType = request.headers.get('content-type') || '';
   let data: Record<string, any> = {};
 

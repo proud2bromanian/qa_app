@@ -26,16 +26,18 @@ export async function PATCH({ locals, params, request }) {
   const body = await request.json();
 
   if (body.teste) {
-    await prisma.testSuiteToTestCase.deleteMany({ where: { suiteId: params.suiteId } });
-    if (body.teste.length > 0) {
-      await prisma.testSuiteToTestCase.createMany({
-        data: body.teste.map((testId: string, idx: number) => ({
-          suiteId: params.suiteId,
-          testId,
-          ordine: idx
-        }))
-      });
-    }
+    await prisma.$transaction(async (tx) => {
+      await tx.testSuiteToTestCase.deleteMany({ where: { suiteId: params.suiteId } });
+      if (body.teste.length > 0) {
+        await tx.testSuiteToTestCase.createMany({
+          data: body.teste.map((testId: string, idx: number) => ({
+            suiteId: params.suiteId,
+            testId,
+            ordine: idx
+          }))
+        });
+      }
+    });
   }
 
   if (body.nume) {

@@ -18,6 +18,7 @@ export async function POST({ request, cookies, getClientAddress }) {
   }
 
   const token = createToken({ id: user.id, email: user.email, nume: user.nume });
-  cookies.set('token', token, { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 });
+  const cookieOpts = { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24 * 7 };
+  cookies.set('token', token, cookieOpts);
   return json({ id: user.id, email: user.email, nume: user.nume });
 }

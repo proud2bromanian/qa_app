@@ -19,5 +19,6 @@ export async function POST({ locals, params, request }) {
   await prisma.projectMember.create({
     data: { userId: locals.user.id, proiectId: params.id, rol: 'membru' }
   });
+  await prisma.invitation.update({ where: { id: invitatie.id }, data: { activa: false } });
   return json({ success: true });
 }

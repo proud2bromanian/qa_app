@@ -11,6 +11,7 @@ export async function POST({ request, cookies, getClientAddress }) {
 
   const { email, nume, parola } = await request.json();
   if (!email || !nume || !parola) return json({ error: 'Toate câmpurile sunt obligatorii' }, { status: 400 });
+  if (parola.length < 8) return json({ error: 'Parola trebuie să aibă minim 8 caractere' }, { status: 400 });
 
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return json({ error: 'Email deja înregistrat' }, { status: 400 });
@@ -20,6 +21,7 @@ export async function POST({ request, cookies, getClientAddress }) {
   });
 
   const token = createToken({ id: user.id, email: user.email, nume: user.nume });
-  cookies.set('token', token, { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 24 * 7 });
+  const cookieOpts = { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', maxAge: 60 * 60 * 24 * 7 };
+  cookies.set('token', token, cookieOpts);
   return json({ id: user.id, email: user.email, nume: user.nume });
 }

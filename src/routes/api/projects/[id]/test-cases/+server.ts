@@ -67,7 +67,7 @@ export async function POST({ locals, params, request }) {
       const ids: string[] = JSON.parse(cloneIds);
       if (ids.length > 0) {
         const atasamente = await prisma.testCaseAttachment.findMany({
-          where: { id: { in: ids } },
+          where: { id: { in: ids }, testCase: { proiectId: params.id } },
           select: { cale: true }
         });
         cloneCai = atasamente.map(a => a.cale);

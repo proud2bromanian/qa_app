@@ -11,6 +11,7 @@ export async function POST({ locals, params, request }) {
     const formData = await request.formData();
     const file = formData.get('file') as File;
     if (!file) return json({ error: 'Fișier lipsă' }, { status: 400 });
+    if (file.size > 5 * 1024 * 1024) return json({ error: 'Fișierul depășește 5MB' }, { status: 400 });
 
     const text = await file.text();
     const rows = parseCSV(text);
