@@ -14,7 +14,9 @@
         const reloadOnce = () => {
           if (sessionStorage.getItem(reloadKey)) return;
           sessionStorage.setItem(reloadKey, '1');
-          window.location.reload();
+          const url = new URL(window.location.href);
+          url.searchParams.set('__app_reload', Date.now().toString());
+          window.location.replace(url.toString());
         };
 
         window.addEventListener('vite:preloadError', (event) => {
@@ -30,6 +32,11 @@
 
         window.addEventListener('load', () => {
           sessionStorage.removeItem(reloadKey);
+          const url = new URL(window.location.href);
+          if (url.searchParams.has('__app_reload')) {
+            url.searchParams.delete('__app_reload');
+            window.history.replaceState(window.history.state, '', url.toString());
+          }
         });
       })();
     </script>
