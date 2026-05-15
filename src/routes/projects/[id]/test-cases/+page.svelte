@@ -106,18 +106,33 @@
       return 0;
     });
 
+  let sentinelEl: HTMLDivElement | null = null;
+
+  let sentinelEl: HTMLDivElement | null = null;
+
   onMount(() => {
     incarcaTeste();
 
-    const handleScroll = () => {
-      if (!nextCursor || loadingMore) return;
-      const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
-      if (scrollTop + clientHeight >= scrollHeight - 300) {
-        incarcaMaiMulte();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && nextCursor && !loadingMore) {
+          incarcaMaiMulte();
+        }
+      },
+      { rootMargin: '400px' }
+    );
+
+    // Observe sentinel once it's in DOM
+    const checkSentinel = () => {
+      if (sentinelEl) {
+        observer.observe(sentinelEl);
+      } else {
+        requestAnimationFrame(checkSentinel);
       }
     };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    checkSentinel();
+
+    return () => observer.disconnect();
   });
 
   function toggleExpand(id: string) {
@@ -636,9 +651,10 @@
             </div>
           </div>
         {/if}
+        <div bind:this={sentinelEl} class="h-1"></div>
       {/if}
       <span class="text-xs font-mono text-slate-300">
-        {teste.length} din {totalTeste} teste
+        {testeFiltrate.length} din {totalTeste} teste
       </span>
     </div>
   {/if}
