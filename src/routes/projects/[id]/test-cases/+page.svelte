@@ -19,6 +19,9 @@
   let sortBy: 'cod' | 'titlu' | 'mediu' = 'cod';
   let expandedCards: string[] = [];
   let showCsvInfo = false;
+  let selectMode = false;
+  let selectedIds: string[] = [];
+  let deletingBatch = false;
 
   let showAddTest = false;
   let testEditatId: string | null = null;
@@ -350,6 +353,59 @@
       (e.target as HTMLInputElement).blur();
     }
   }
+
+  function toggleSelectMode() {
+    selectMode = !selectMode;
+    selectedIds = [];
+  }
+
+  function toggleSelect(id: string) {
+    if (selectedIds.includes(id)) {
+      selectedIds = selectedIds.filter(x => x !== id);
+    } else {
+      selectedIds = [...selectedIds, id];
+    }
+  }
+
+  async function selectAll() {
+    if (selectedIds.length === testeFiltrate.length && testeFiltrate.length > 0) {
+      // Already selected all filtered — fetch ALL from server
+      try {
+        const r = await fetch(`/api/projects/${projectId}/test-cases?selectIds=1`);
+        const data = await r.json();
+        selectedIds = data.ids || [];
+        toast.info(`${selectedIds.length} teste selectate din total`);
+      } catch { toast.error('Eroare la selectare'); }
+    } else {
+      selectedIds = testeFiltrate.map(t => t.id);
+    }
+  }
+
+  function deselectAll() {
+    selectedIds = [];
+  }
+
+  async function stergeSelectate() {
+    if (!confirm(`Sigur doriți să ștergeți ${selectedIds.length} teste? Acțiunea este ireversibilă.`)) return;
+    deletingBatch = true;
+    try {
+      const r = await fetch(`/api/projects/${projectId}/test-cases/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        toast.error(data.error || 'Ștergerea a eșuat');
+        return;
+      }
+      toast.success(`${selectedIds.length} teste șterse`);
+      selectedIds = [];
+      selectMode = false;
+      await incarcaTeste();
+    } catch { toast.error('Eroare la ștergere'); }
+    deletingBatch = false;
+  }
 </script>
 
 <svelte:window on:keydown={(e) => {
@@ -438,6 +494,10 @@
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
         Test Nou
       </button>
+      <button on:click={toggleSelectMode} class="inline-flex items-center gap-1.5 rounded-md border {selectMode ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300'} px-3.5 py-2 text-xs font-medium transition-all cursor-pointer">
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+        {selectMode ? 'Anulează' : 'Selectează'}
+      </button>
     </div>
   </div>
 
@@ -522,8 +582,18 @@
           : 'M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122'}
         {@const prioritate = t.prioritate || 'medie'}
         {@const prioBadge = prioritate === 'critica' ? { bg: 'bg-rose-50 text-rose-600', label: 'CRIT' } : prioritate === 'inalta' ? { bg: 'bg-orange-50 text-orange-600', label: 'ÎNALT' } : prioritate === 'scăzuta' ? { bg: 'bg-slate-50 text-slate-400', label: 'SCĂZ' } : { bg: 'bg-slate-50 text-slate-500', label: 'MED' }}
-        <div class="group rounded-md border border-slate-200 bg-white {borderColor} border-l-[3px] hover:border-slate-300 transition-colors">
-          <!-- Card Header (always visible) -->
+        <div class="group rounded-md border {selectedIds.includes(t.id) ? 'border-slate-400 bg-slate-50' : 'border-slate-200 bg-white'} {borderColor} border-l-[3px] hover:border-slate-300 transition-colors">
+          <!-- Card Header -->
+          <div class="flex items-center">
+            {#if selectMode}
+              <button type="button" on:click|stopPropagation={() => toggleSelect(t.id)} class="flex items-center pl-3 pr-1 cursor-pointer shrink-0" tabindex="-1">
+                <div class="flex h-4 w-4 items-center justify-center rounded border {selectedIds.includes(t.id) ? 'border-slate-900 bg-slate-900' : 'border-slate-300 bg-white hover:border-slate-400'} transition-colors">
+                  {#if selectedIds.includes(t.id)}
+                    <svg class="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                  {/if}
+                </div>
+              </button>
+            {/if}
           <button
             type="button"
             on:click={() => toggleExpand(t.id)}
@@ -570,6 +640,7 @@
             <!-- Expand Chevron -->
             <svg class="h-4 w-4 shrink-0 text-slate-300 transition-transform duration-200 {expanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </button>
+          </div>
 
           <!-- Expanded Details -->
           {#if expanded}
@@ -637,6 +708,23 @@
         </div>
       {/each}
     </div>
+
+    <!-- Bulk Action Bar -->
+    {#if selectMode && selectedIds.length > 0}
+      <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 animate-slide-up">
+        <div class="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-2xl shadow-slate-900/10">
+          <span class="text-sm font-semibold text-slate-900">{selectedIds.length} selectate</span>
+          <div class="h-5 w-px bg-slate-200"></div>
+          <button on:click={selectAll} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer transition-colors">{selectedIds.length === testeFiltrate.length && testeFiltrate.length > 0 ? 'Tot proiectul' : 'Toate vizibile'}</button>
+          <button on:click={deselectAll} class="text-xs font-medium text-slate-500 hover:text-slate-700 cursor-pointer transition-colors">Deselectează</button>
+          <div class="h-5 w-px bg-slate-200"></div>
+          <button on:click={stergeSelectate} disabled={deletingBatch} class="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition-colors cursor-pointer">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            {deletingBatch ? 'Se șterge...' : 'Șterge'}
+          </button>
+        </div>
+      </div>
+    {/if}
 
     <!-- Results count footer + scroll sentinel -->
     <div class="pt-2 text-center">

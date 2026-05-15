@@ -13,6 +13,11 @@ export async function GET({ locals, params, url }) {
   const { autorizat } = await verificaMembruProiect(locals.user.id, params.id);
   if (!autorizat) return json({ error: 'Nu aveți acces la acest proiect' }, { status: 403 });
 
+  if (url.searchParams.get('selectIds')) {
+    const ids = await prisma.testCase.findMany({ where: { proiectId: params.id }, select: { id: true } });
+    return json({ ids: ids.map(t => t.id) });
+  }
+
   const take = Number(url.searchParams.get('take')) || 50;
   const cursor = url.searchParams.get('cursor') || undefined;
   const where = { proiectId: params.id };
